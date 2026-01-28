@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
 import TeacherInputPage from './pages/TeacherInputPage';
 import AdminPage from './pages/AdminPage';
@@ -7,7 +7,7 @@ import SendPage from './pages/SendPage';
 
 function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         <Route path="/" element={<LoginPage />} />
         <Route path="/teacher" element={<TeacherInputPage />} />
@@ -16,7 +16,7 @@ function App() {
         <Route path="/send" element={<SendPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 
