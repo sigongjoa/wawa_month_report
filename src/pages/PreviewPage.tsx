@@ -122,7 +122,7 @@ export default function PreviewPage() {
                     <XAxis type="number" domain={[0, 100]} />
                     <YAxis type="category" dataKey="subject" />
                     <Tooltip
-                      formatter={(value: number) => [`${value}점`]}
+                      formatter={(value) => [`${value}점`]}
                       labelFormatter={(label) => `${label}`}
                     />
                     <Bar dataKey="score" radius={[0, 4, 4, 0]}>

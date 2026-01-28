@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useReportStore } from '../stores/reportStore';
 import { fetchStudents } from '../services/notion';
-import type { Student, SubjectScore } from '../types';
+import type { SubjectScore } from '../types';
 
 export default function TeacherInputPage() {
   const navigate = useNavigate();

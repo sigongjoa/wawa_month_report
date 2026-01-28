@@ -74,8 +74,9 @@ export default function SendPage() {
         addSendHistory({
           studentId: currentReport.studentId,
           studentName: currentReport.studentName,
-          reportId: '',
+          reportId: currentReport.id,
           recipientName: '나에게 보내기',
+          recipientType: 'self',
           sentAt: new Date().toISOString(),
           status: 'success',
         });
@@ -136,9 +137,9 @@ export default function SendPage() {
                 </span>
               ))}
             </div>
-            {currentReport.comment && (
+            {currentReport.totalComment && (
               <p style={{ marginTop: '12px', fontSize: '14px', color: '#6b7280' }}>
-                "{currentReport.comment}"
+                "{currentReport.totalComment}"
               </p>
             )}
           </div>

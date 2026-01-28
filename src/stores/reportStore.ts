@@ -43,7 +43,7 @@ const getCurrentYearMonth = () => {
 
 export const useReportStore = create<ReportState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       // 로그인
       currentUser: null,
       setCurrentUser: (user) => set({ currentUser: user }),

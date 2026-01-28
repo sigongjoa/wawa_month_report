@@ -20,7 +20,7 @@ export const elementToImage = async (elementId: string): Promise<string> => {
 // HTML 요소를 PDF로 변환
 export const elementToPdf = async (
   elementId: string,
-  fileName: string = 'report.pdf'
+  _fileName: string = 'report.pdf'
 ): Promise<Blob> => {
   const element = document.getElementById(elementId);
   if (!element) {
@@ -91,3 +91,6 @@ export const pdfToBase64 = async (elementId: string): Promise<string> => {
     reader.readAsDataURL(blob);
   });
 };
+
+// Alias for backward compatibility
+export const downloadReportAsPdf = downloadPdf;
