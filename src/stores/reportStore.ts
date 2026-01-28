@@ -1,32 +1,32 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Student, MonthlyReport, SendHistory, KakaoFriend } from '../types';
+import type { Teacher, Student, MonthlyReport, SendHistory, CurrentUser } from '../types';
 
 interface ReportState {
-  // 학생 관련
+  // 로그인
+  currentUser: CurrentUser | null;
+  setCurrentUser: (user: CurrentUser | null) => void;
+  logout: () => void;
+
+  // 선생님 목록
+  teachers: Teacher[];
+  setTeachers: (teachers: Teacher[]) => void;
+
+  // 학생 목록
   students: Student[];
-  selectedStudent: Student | null;
   setStudents: (students: Student[]) => void;
-  setSelectedStudent: (student: Student | null) => void;
 
   // 리포트 관련
-  currentReport: MonthlyReport | null;
   reports: MonthlyReport[];
-  setCurrentReport: (report: MonthlyReport | null) => void;
+  currentReport: MonthlyReport | null;
   setReports: (reports: MonthlyReport[]) => void;
+  setCurrentReport: (report: MonthlyReport | null) => void;
+  updateReport: (report: MonthlyReport) => void;
   addReport: (report: MonthlyReport) => void;
 
-  // 전송 관련
+  // 전송 이력
   sendHistories: SendHistory[];
   addSendHistory: (history: SendHistory) => void;
-
-  // 카카오 관련
-  kakaoFriends: KakaoFriend[];
-  setKakaoFriends: (friends: KakaoFriend[]) => void;
-  isKakaoLoggedIn: boolean;
-  setKakaoLoggedIn: (loggedIn: boolean) => void;
-  kakaoAccessToken: string | null;
-  setKakaoAccessToken: (token: string | null) => void;
 
   // 현재 선택된 월
   currentYearMonth: string;
@@ -43,31 +43,36 @@ const getCurrentYearMonth = () => {
 
 export const useReportStore = create<ReportState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
+      // 로그인
+      currentUser: null,
+      setCurrentUser: (user) => set({ currentUser: user }),
+      logout: () => set({ currentUser: null }),
+
+      // 선생님
+      teachers: [],
+      setTeachers: (teachers) => set({ teachers }),
+
       // 학생
       students: [],
-      selectedStudent: null,
       setStudents: (students) => set({ students }),
-      setSelectedStudent: (student) => set({ selectedStudent: student }),
 
       // 리포트
-      currentReport: null,
       reports: [],
-      setCurrentReport: (report) => set({ currentReport: report }),
+      currentReport: null,
       setReports: (reports) => set({ reports }),
+      setCurrentReport: (report) => set({ currentReport: report }),
+      updateReport: (report) => set((state) => ({
+        reports: state.reports.map((r) => r.id === report.id ? report : r),
+        currentReport: state.currentReport?.id === report.id ? report : state.currentReport,
+      })),
       addReport: (report) => set((state) => ({ reports: [...state.reports, report] })),
 
       // 전송
       sendHistories: [],
-      addSendHistory: (history) => set((state) => ({ sendHistories: [...state.sendHistories, history] })),
-
-      // 카카오
-      kakaoFriends: [],
-      setKakaoFriends: (friends) => set({ kakaoFriends: friends }),
-      isKakaoLoggedIn: false,
-      setKakaoLoggedIn: (loggedIn) => set({ isKakaoLoggedIn: loggedIn }),
-      kakaoAccessToken: null,
-      setKakaoAccessToken: (token) => set({ kakaoAccessToken: token, isKakaoLoggedIn: !!token }),
+      addSendHistory: (history) => set((state) => ({
+        sendHistories: [history, ...state.sendHistories]
+      })),
 
       // 현재 월
       currentYearMonth: getCurrentYearMonth(),
@@ -75,28 +80,24 @@ export const useReportStore = create<ReportState>()(
 
       // 초기화
       reset: () => set({
+        currentUser: null,
+        teachers: [],
         students: [],
-        selectedStudent: null,
-        currentReport: null,
         reports: [],
+        currentReport: null,
         sendHistories: [],
-        kakaoFriends: [],
-        isKakaoLoggedIn: false,
-        kakaoAccessToken: null,
         currentYearMonth: getCurrentYearMonth(),
       }),
     }),
     {
-      name: 'monthly-report-storage', // localStorage 키 이름
+      name: 'wawa-report-storage',
       partialize: (state) => ({
-        // 저장할 상태만 선택
-        currentReport: state.currentReport,
+        currentUser: state.currentUser,
+        teachers: state.teachers,
+        students: state.students,
         reports: state.reports,
         sendHistories: state.sendHistories,
         currentYearMonth: state.currentYearMonth,
-        selectedStudent: state.selectedStudent,
-        kakaoAccessToken: state.kakaoAccessToken,
-        isKakaoLoggedIn: state.isKakaoLoggedIn,
       }),
     }
   )

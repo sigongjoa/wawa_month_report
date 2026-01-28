@@ -1,0 +1,288 @@
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useReportStore } from '../stores/reportStore';
+import { fetchStudents } from '../services/notion';
+import type { Student, SubjectScore } from '../types';
+
+export default function TeacherInputPage() {
+  const navigate = useNavigate();
+  const {
+    currentUser,
+    logout,
+    students,
+    setStudents,
+    reports,
+    updateReport,
+    addReport,
+    currentYearMonth,
+    setCurrentYearMonth,
+  } = useReportStore();
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedMessage, setSavedMessage] = useState('');
+
+  // 현재 선생님의 과목을 수강하는 학생들의 점수
+  const [studentScores, setStudentScores] = useState<Map<string, { score: number; comment: string }>>(new Map());
+
+  useEffect(() => {
+    if (!currentUser) {
+      navigate('/');
+      return;
+    }
+
+    const loadData = async () => {
+      const studentsData = await fetchStudents();
+      setStudents(studentsData);
+
+      // 현재 선생님 과목을 수강하는 학생들 필터링하고 기존 점수 로드
+      const mySubject = currentUser.teacher.subject;
+      const filtered = studentsData.filter((s) => s.subjects.includes(mySubject));
+
+      const scoreMap = new Map<string, { score: number; comment: string }>();
+      filtered.forEach((student) => {
+        // 기존 리포트에서 점수 찾기
+        const report = reports.find(
+          (r) => r.studentId === student.id && r.yearMonth === currentYearMonth
+        );
+        const existingScore = report?.scores.find((s) => s.subject === mySubject);
+
+        scoreMap.set(student.id, {
+          score: existingScore?.score ?? 0,
+          comment: existingScore?.comment ?? '',
+        });
+      });
+
+      setStudentScores(scoreMap);
+      setLoading(false);
+    };
+
+    loadData();
+  }, [currentUser, navigate, setStudents, reports, currentYearMonth]);
+
+  const mySubject = currentUser?.teacher.subject || '';
+  const myStudents = students.filter((s) => s.subjects.includes(mySubject));
+
+  const handleScoreChange = (studentId: string, score: number) => {
+    setStudentScores((prev) => {
+      const newMap = new Map(prev);
+      const existing = newMap.get(studentId) || { score: 0, comment: '' };
+      newMap.set(studentId, { ...existing, score: Math.max(0, Math.min(100, score)) });
+      return newMap;
+    });
+  };
+
+  const handleCommentChange = (studentId: string, comment: string) => {
+    setStudentScores((prev) => {
+      const newMap = new Map(prev);
+      const existing = newMap.get(studentId) || { score: 0, comment: '' };
+      newMap.set(studentId, { ...existing, comment });
+      return newMap;
+    });
+  };
+
+  const handleSaveAll = async () => {
+    if (!currentUser) return;
+
+    setSaving(true);
+    setSavedMessage('');
+
+    try {
+      for (const student of myStudents) {
+        const scoreData = studentScores.get(student.id);
+        if (!scoreData) continue;
+
+        const newScore: SubjectScore = {
+          subject: mySubject,
+          score: scoreData.score,
+          teacherId: currentUser.teacher.id,
+          teacherName: currentUser.teacher.name,
+          comment: scoreData.comment,
+          updatedAt: new Date().toISOString(),
+        };
+
+        // 기존 리포트 찾기 또는 새로 생성
+        let report = reports.find(
+          (r) => r.studentId === student.id && r.yearMonth === currentYearMonth
+        );
+
+        if (report) {
+          // 기존 리포트 업데이트
+          const existingScoreIndex = report.scores.findIndex((s) => s.subject === mySubject);
+          const newScores = [...report.scores];
+
+          if (existingScoreIndex >= 0) {
+            newScores[existingScoreIndex] = newScore;
+          } else {
+            newScores.push(newScore);
+          }
+
+          updateReport({
+            ...report,
+            scores: newScores,
+            updatedAt: new Date().toISOString(),
+          });
+        } else {
+          // 새 리포트 생성
+          addReport({
+            id: `${student.id}-${currentYearMonth}`,
+            studentId: student.id,
+            studentName: student.name,
+            yearMonth: currentYearMonth,
+            scores: [newScore],
+            status: 'draft',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      }
+
+      setSavedMessage('저장되었습니다!');
+      setTimeout(() => setSavedMessage(''), 3000);
+    } catch (error) {
+      console.error('Save error:', error);
+      setSavedMessage('저장 중 오류가 발생했습니다.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleLogout = () => {
+    logout();
+    navigate('/');
+  };
+
+  if (!currentUser) return null;
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
+        <p>로딩 중...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', backgroundColor: '#f3f4f6' }}>
+      {/* 헤더 */}
+      <header style={{ backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '16px 24px' }}>
+        <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h1 style={{ fontSize: '20px', fontWeight: 'bold', color: '#1f2937' }}>
+              {currentUser.teacher.name} 선생님
+            </h1>
+            <p style={{ color: '#6b7280', fontSize: '14px' }}>{mySubject} 점수 입력</p>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <input
+              type="month"
+              value={currentYearMonth}
+              onChange={(e) => setCurrentYearMonth(e.target.value)}
+              style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #d1d5db' }}
+            />
+            <button
+              onClick={handleLogout}
+              style={{ padding: '8px 16px', backgroundColor: '#f3f4f6', borderRadius: '8px', border: 'none', cursor: 'pointer' }}
+            >
+              로그아웃
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* 메인 콘텐츠 */}
+      <main style={{ maxWidth: '1200px', margin: '0 auto', padding: '24px' }}>
+        <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+          <div style={{ padding: '20px 24px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2 style={{ fontSize: '18px', fontWeight: '600' }}>
+              {currentYearMonth} {mySubject} 점수 입력
+            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {savedMessage && (
+                <span style={{ color: savedMessage.includes('오류') ? '#dc2626' : '#16a34a', fontSize: '14px' }}>
+                  {savedMessage}
+                </span>
+              )}
+              <button
+                onClick={handleSaveAll}
+                disabled={saving}
+                style={{
+                  padding: '10px 24px',
+                  backgroundColor: saving ? '#93c5fd' : '#2563eb',
+                  color: '#ffffff',
+                  borderRadius: '8px',
+                  fontWeight: '500',
+                  border: 'none',
+                  cursor: saving ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {saving ? '저장 중...' : '전체 저장'}
+              </button>
+            </div>
+          </div>
+
+          {myStudents.length === 0 ? (
+            <div style={{ padding: '48px', textAlign: 'center', color: '#6b7280' }}>
+              {mySubject} 과목을 수강하는 학생이 없습니다.
+            </div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#f9fafb' }}>
+                  <th style={{ padding: '12px 24px', textAlign: 'left', fontWeight: '600', color: '#374151' }}>학생</th>
+                  <th style={{ padding: '12px 24px', textAlign: 'left', fontWeight: '600', color: '#374151' }}>학년</th>
+                  <th style={{ padding: '12px 24px', textAlign: 'center', fontWeight: '600', color: '#374151', width: '120px' }}>점수</th>
+                  <th style={{ padding: '12px 24px', textAlign: 'left', fontWeight: '600', color: '#374151' }}>코멘트</th>
+                </tr>
+              </thead>
+              <tbody>
+                {myStudents.map((student) => {
+                  const scoreData = studentScores.get(student.id) || { score: 0, comment: '' };
+                  return (
+                    <tr key={student.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                      <td style={{ padding: '16px 24px' }}>
+                        <span style={{ fontWeight: '500' }}>{student.name}</span>
+                      </td>
+                      <td style={{ padding: '16px 24px', color: '#6b7280' }}>{student.grade}</td>
+                      <td style={{ padding: '16px 24px', textAlign: 'center' }}>
+                        <input
+                          type="number"
+                          value={scoreData.score || ''}
+                          onChange={(e) => handleScoreChange(student.id, parseInt(e.target.value) || 0)}
+                          min={0}
+                          max={100}
+                          style={{
+                            width: '80px',
+                            padding: '8px 12px',
+                            borderRadius: '8px',
+                            border: '1px solid #d1d5db',
+                            textAlign: 'center',
+                            fontSize: '16px',
+                          }}
+                        />
+                      </td>
+                      <td style={{ padding: '16px 24px' }}>
+                        <input
+                          type="text"
+                          value={scoreData.comment}
+                          onChange={(e) => handleCommentChange(student.id, e.target.value)}
+                          placeholder="한줄 코멘트"
+                          style={{
+                            width: '100%',
+                            padding: '8px 12px',
+                            borderRadius: '8px',
+                            border: '1px solid #d1d5db',
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
