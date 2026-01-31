@@ -269,7 +269,7 @@ ipcMain.handle('print-pdf', async (event, pdfUrl, printerName) => {
 
 ipcMain.handle('notion-fetch', async (event, endpoint, options = {}) => {
   return new Promise((resolve, reject) => {
-    const url = new URL(`https://api.notion.com${endpoint}`);
+    const url = new URL(`https://api.notion.com/v1${endpoint}`);
 
     const requestOptions = {
       hostname: url.hostname,
