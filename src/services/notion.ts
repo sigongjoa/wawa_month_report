@@ -8,7 +8,7 @@ const isElectron = (): boolean => {
 // localStorage에서 앱 설정 가져오기
 const getAppSettings = (): Partial<AppSettings> => {
   try {
-    const stored = localStorage.getItem('monthly-report-storage');
+    const stored = localStorage.getItem('wawa-report-storage');
     if (stored) {
       const parsed = JSON.parse(stored);
       return parsed.state?.appSettings || {};
