@@ -1,23 +1,13 @@
-import type { Teacher, Student, Score, MonthlyReport, SubjectScore, Exam, DifficultyGrade, AppSettings } from '../types';
+import type { Teacher, Student, Score, MonthlyReport, SubjectScore, Exam, DifficultyGrade } from '../types';
+import { useReportStore } from '../stores/reportStore';
 
 // Electron 환경 감지
 const isElectron = (): boolean => {
   return !!(window.electronAPI || window.location.protocol === 'file:');
 };
 
-// localStorage에서 앱 설정 가져오기
-const getAppSettings = (): Partial<AppSettings> => {
-  try {
-    const stored = localStorage.getItem('wawa-report-storage');
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      return parsed.state?.appSettings || {};
-    }
-  } catch (e) {
-    console.warn('Failed to parse app settings:', e);
-  }
-  return {};
-};
+// zustand store에서 앱 설정 가져오기
+const getAppSettings = () => useReportStore.getState().appSettings;
 
 // API Key 가져오기 (앱 설정 우선, 환경변수 폴백)
 const getApiKey = (): string => {
