@@ -264,3 +264,54 @@ ipcMain.handle('print-pdf', async (event, pdfUrl, printerName) => {
     };
   }
 });
+
+// ============ Notion API 프록시 ============
+
+ipcMain.handle('notion-fetch', async (event, endpoint, options = {}) => {
+  return new Promise((resolve, reject) => {
+    const url = new URL(`https://api.notion.com${endpoint}`);
+
+    const requestOptions = {
+      hostname: url.hostname,
+      port: 443,
+      path: url.pathname + url.search,
+      method: options.method || 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Notion-Version': '2022-06-28',
+        ...options.headers,
+      },
+    };
+
+    const req = https.request(requestOptions, (res) => {
+      let data = '';
+
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          if (res.statusCode >= 400) {
+            resolve({ error: true, status: res.statusCode, data: json });
+          } else {
+            resolve({ error: false, status: res.statusCode, data: json });
+          }
+        } catch (e) {
+          resolve({ error: true, status: res.statusCode, data: data });
+        }
+      });
+    });
+
+    req.on('error', (error) => {
+      resolve({ error: true, message: error.message });
+    });
+
+    if (options.body) {
+      req.write(options.body);
+    }
+
+    req.end();
+  });
+});

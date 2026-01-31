@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+const { contextBridge, ipcRenderer } = require('electron');
 
 // Renderer에서 사용할 API를 안전하게 노출
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -10,4 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // 기본 프린터 조회
   getDefaultPrinter: () => ipcRenderer.invoke('get-default-printer'),
+
+  // Notion API 프록시 (Electron 환경용)
+  notionFetch: (endpoint, options) => ipcRenderer.invoke('notion-fetch', endpoint, options),
 });

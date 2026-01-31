@@ -22,7 +22,7 @@ export const getPrinters = async (): Promise<PrinterInfo[]> => {
   }
 
   try {
-    const response = await window.electronAPI.getPrinters();
+    const response = await window.electronAPI!.getPrinters();
 
     if (!response.success) {
       console.error('Failed to get printers:', response.error);
@@ -45,7 +45,7 @@ export const getDefaultPrinter = async (): Promise<string | null> => {
   }
 
   try {
-    const response = await window.electronAPI.getDefaultPrinter();
+    const response = await window.electronAPI!.getDefaultPrinter();
 
     if (!response.success || !response.printer) {
       return null;
@@ -87,7 +87,7 @@ export const printPDF = async (request: PrintRequest): Promise<PrintPDFResponse>
   try {
     console.log('[Print Service] Printing PDF:', request.pdfUrl);
 
-    const response = await window.electronAPI.printPDF(
+    const response = await window.electronAPI!.printPDF(
       request.pdfUrl,
       request.printerName
     );

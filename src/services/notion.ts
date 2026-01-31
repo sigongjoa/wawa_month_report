@@ -1,9 +1,14 @@
 import type { Teacher, Student, Score, MonthlyReport, SubjectScore, Exam, DifficultyGrade, AppSettings } from '../types';
 
+// Electron 환경 감지
+const isElectron = (): boolean => {
+  return !!(window.electronAPI || window.location.protocol === 'file:');
+};
+
 // localStorage에서 앱 설정 가져오기
 const getAppSettings = (): Partial<AppSettings> => {
   try {
-    const stored = localStorage.getItem('wawa-report-storage');
+    const stored = localStorage.getItem('monthly-report-storage');
     if (stored) {
       const parsed = JSON.parse(stored);
       return parsed.state?.appSettings || {};
@@ -31,17 +36,6 @@ const getDbIds = () => {
   };
 };
 
-// Notion API Base URL (개발: 프록시, 프로덕션: 직접)
-const getNotionBaseUrl = () => {
-  // Electron 환경이거나 file:// 프로토콜이면 직접 호출 불가 (CORS)
-  // 개발 서버에서는 프록시 사용
-  if (import.meta.env.DEV) {
-    return '/api/notion/v1';
-  }
-  // 프로덕션(Electron)에서는 프록시 서버 필요하거나 목업 사용
-  return '/api/notion/v1';
-};
-
 // Notion API 호출 헬퍼
 const notionFetch = async (endpoint: string, options: RequestInit = {}, apiKey?: string) => {
   const key = apiKey || getApiKey();
@@ -49,7 +43,26 @@ const notionFetch = async (endpoint: string, options: RequestInit = {}, apiKey?:
     throw new Error('Notion API Key가 설정되지 않았습니다.');
   }
 
-  const baseUrl = getNotionBaseUrl();
+  // Electron 환경: IPC를 통해 main process에서 API 호출
+  if (isElectron() && window.electronAPI) {
+    const result = await window.electronAPI.notionFetch(endpoint, {
+      method: options.method || 'GET',
+      headers: {
+        'Authorization': `Bearer ${key}`,
+      },
+      body: options.body,
+    });
+
+    if (result.error) {
+      console.error('Notion API error:', result.data || result.message);
+      throw new Error(result.data?.message || result.message || 'Notion API error');
+    }
+
+    return result.data;
+  }
+
+  // 웹 환경: 프록시를 통해 API 호출
+  const baseUrl = '/api/notion/v1';
   const response = await fetch(`${baseUrl}${endpoint}`, {
     ...options,
     headers: {

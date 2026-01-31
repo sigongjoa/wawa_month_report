@@ -34,15 +34,23 @@ export interface PrintPDFResponse {
   details?: string;
 }
 
+export interface NotionFetchResponse {
+  error: boolean;
+  status?: number;
+  data?: any;
+  message?: string;
+}
+
 export interface ElectronAPI {
   getPrinters: () => Promise<GetPrintersResponse>;
   getDefaultPrinter: () => Promise<GetDefaultPrinterResponse>;
   printPDF: (pdfUrl: string, printerName?: string) => Promise<PrintPDFResponse>;
+  notionFetch: (endpoint: string, options: any) => Promise<NotionFetchResponse>;
 }
 
 declare global {
   interface Window {
-    electronAPI: ElectronAPI;
+    electronAPI?: ElectronAPI;
   }
 }
 
