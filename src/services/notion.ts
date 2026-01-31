@@ -158,7 +158,7 @@ export const fetchTeachers = async (): Promise<Teacher[]> => {
         name: page.properties['선생님']?.title?.[0]?.plain_text || '',
         subjects,
         pin: String(page.properties['PIN']?.number || '0000'),
-        isAdmin: page.properties['관리자']?.checkbox || false,
+        isAdmin: page.properties['isAdmin']?.select?.name === 'True',
       };
     });
   } catch (error) {

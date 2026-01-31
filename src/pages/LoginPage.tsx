@@ -24,14 +24,11 @@ export default function LoginPage() {
     const loadInitialData = async () => {
       try {
         setLoadingStatus('선생님 데이터 로드 중...');
-        console.log('[LoginPage] Notion에서 선생님 데이터 가져오는 중...');
         const teacherData = await fetchTeachers();
-        console.log('[LoginPage] 선생님 데이터:', teacherData);
         setTeachers(teacherData);
 
         setLoadingStatus('학생 데이터 로드 중...');
         const studentData = await fetchStudents();
-        console.log('[LoginPage] 학생 데이터:', studentData.length, '명');
         setStudents(studentData);
 
         setLoadingStatus('완료!');
@@ -91,14 +88,13 @@ export default function LoginPage() {
       return;
     }
 
-    console.log('[LoginPage] 로그인 시도:', teacher.name, '입력 PIN:', inputPin, '실제 PIN:', teacher.pin);
-
     if (teacher.pin === inputPin) {
       setCurrentUser({
         teacher,
         loginAt: new Date().toISOString(),
       });
-      navigate('/admin');
+      // isAdmin이 true면 관리자 페이지, 아니면 선생님 페이지로
+      navigate(teacher.isAdmin ? '/admin' : '/teacher');
     } else {
       setLoginError('PIN이 일치하지 않습니다.');
       setPin(['', '', '', '']);
