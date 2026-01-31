@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useReportStore } from '../stores/reportStore';
-import { fetchStudents, fetchExams } from '../services/notion';
+import { fetchStudents, fetchExams, saveScore } from '../services/notion';
 import type { SubjectScore, DifficultyGrade } from '../types';
 
 // 난이도별 색상
@@ -43,13 +43,23 @@ export default function TeacherInputPage() {
   const [saving, setSaving] = useState(false);
   const [savedMessage, setSavedMessage] = useState('');
 
-  // 현재 선생님의 과목을 수강하는 학생들의 점수
+  // 선생님이 여러 과목을 가르칠 경우 선택된 과목
+  const [selectedSubject, setSelectedSubject] = useState('');
+
+  // 현재 선택된 과목을 수강하는 학생들의 점수
   const [studentScores, setStudentScores] = useState<Map<string, { score: number; comment: string }>>(new Map());
+
+  const teacherSubjects = currentUser?.teacher.subjects || [];
 
   useEffect(() => {
     if (!currentUser) {
       navigate('/');
       return;
+    }
+
+    // 첫 번째 과목을 기본 선택
+    if (teacherSubjects.length > 0 && !selectedSubject) {
+      setSelectedSubject(teacherSubjects[0]);
     }
 
     const loadData = async () => {
@@ -59,38 +69,39 @@ export default function TeacherInputPage() {
       ]);
       setStudents(studentsData);
       setExams(examsData);
-
-      // 현재 선생님 과목을 수강하는 학생들 필터링하고 기존 점수 로드
-      const mySubject = currentUser.teacher.subject;
-      const filtered = studentsData.filter((s) => s.subjects.includes(mySubject));
-
-      const scoreMap = new Map<string, { score: number; comment: string }>();
-      filtered.forEach((student) => {
-        // 기존 리포트에서 점수 찾기
-        const report = reports.find(
-          (r) => r.studentId === student.id && r.yearMonth === currentYearMonth
-        );
-        const existingScore = report?.scores.find((s) => s.subject === mySubject);
-
-        scoreMap.set(student.id, {
-          score: existingScore?.score ?? 0,
-          comment: existingScore?.comment ?? '',
-        });
-      });
-
-      setStudentScores(scoreMap);
       setLoading(false);
     };
 
     loadData();
-  }, [currentUser, navigate, setStudents, setExams, reports, currentYearMonth]);
+  }, [currentUser, navigate, setStudents, setExams, teacherSubjects.length]);
 
-  const mySubject = currentUser?.teacher.subject || '';
-  const myStudents = students.filter((s) => s.subjects.includes(mySubject));
+  // 선택된 과목이 바뀌면 점수 데이터 다시 로드
+  useEffect(() => {
+    if (!selectedSubject || students.length === 0) return;
+
+    const filtered = students.filter((s) => s.subjects.includes(selectedSubject));
+    const scoreMap = new Map<string, { score: number; comment: string }>();
+
+    filtered.forEach((student) => {
+      const report = reports.find(
+        (r) => r.studentId === student.id && r.yearMonth === currentYearMonth
+      );
+      const existingScore = report?.scores.find((s) => s.subject === selectedSubject);
+
+      scoreMap.set(student.id, {
+        score: existingScore?.score ?? 0,
+        comment: existingScore?.comment ?? '',
+      });
+    });
+
+    setStudentScores(scoreMap);
+  }, [selectedSubject, students, reports, currentYearMonth]);
+
+  const myStudents = students.filter((s) => s.subjects.includes(selectedSubject));
 
   // 현재 월의 내 과목 시험 정보
   const currentExam = exams.find(
-    (e) => e.subject === mySubject && e.yearMonth === currentYearMonth
+    (e) => e.subject === selectedSubject && e.yearMonth === currentYearMonth
   );
 
   const handleScoreChange = (studentId: string, score: number) => {
@@ -118,56 +129,71 @@ export default function TeacherInputPage() {
     setSavedMessage('');
 
     try {
+      let savedCount = 0;
+
       for (const student of myStudents) {
         const scoreData = studentScores.get(student.id);
-        if (!scoreData) continue;
+        if (!scoreData || scoreData.score === 0) continue;
 
-        const newScore: SubjectScore = {
-          subject: mySubject,
-          score: scoreData.score,
-          teacherId: currentUser.teacher.id,
-          teacherName: currentUser.teacher.name,
-          comment: scoreData.comment,
-          updatedAt: new Date().toISOString(),
-        };
-
-        // 기존 리포트 찾기 또는 새로 생성
-        let report = reports.find(
-          (r) => r.studentId === student.id && r.yearMonth === currentYearMonth
+        // Notion DB에 저장
+        const success = await saveScore(
+          student.id,
+          student.name,
+          currentYearMonth,
+          selectedSubject,
+          scoreData.score,
+          currentUser.teacher.id,
+          scoreData.comment
         );
 
-        if (report) {
-          // 기존 리포트 업데이트
-          const existingScoreIndex = report.scores.findIndex((s) => s.subject === mySubject);
-          const newScores = [...report.scores];
+        if (success) {
+          savedCount++;
 
-          if (existingScoreIndex >= 0) {
-            newScores[existingScoreIndex] = newScore;
+          // 로컬 상태도 업데이트
+          const newScore: SubjectScore = {
+            subject: selectedSubject,
+            score: scoreData.score,
+            teacherId: currentUser.teacher.id,
+            teacherName: currentUser.teacher.name,
+            comment: scoreData.comment,
+            updatedAt: new Date().toISOString(),
+          };
+
+          let report = reports.find(
+            (r) => r.studentId === student.id && r.yearMonth === currentYearMonth
+          );
+
+          if (report) {
+            const existingScoreIndex = report.scores.findIndex((s) => s.subject === selectedSubject);
+            const newScores = [...report.scores];
+
+            if (existingScoreIndex >= 0) {
+              newScores[existingScoreIndex] = newScore;
+            } else {
+              newScores.push(newScore);
+            }
+
+            updateReport({
+              ...report,
+              scores: newScores,
+              updatedAt: new Date().toISOString(),
+            });
           } else {
-            newScores.push(newScore);
+            addReport({
+              id: `${student.id}-${currentYearMonth}`,
+              studentId: student.id,
+              studentName: student.name,
+              yearMonth: currentYearMonth,
+              scores: [newScore],
+              status: 'draft',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            });
           }
-
-          updateReport({
-            ...report,
-            scores: newScores,
-            updatedAt: new Date().toISOString(),
-          });
-        } else {
-          // 새 리포트 생성
-          addReport({
-            id: `${student.id}-${currentYearMonth}`,
-            studentId: student.id,
-            studentName: student.name,
-            yearMonth: currentYearMonth,
-            scores: [newScore],
-            status: 'draft',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          });
         }
       }
 
-      setSavedMessage('저장되었습니다!');
+      setSavedMessage(`${savedCount}명 저장 완료!`);
       setTimeout(() => setSavedMessage(''), 3000);
     } catch (error) {
       console.error('Save error:', error);
@@ -201,9 +227,23 @@ export default function TeacherInputPage() {
             <h1 style={{ fontSize: '20px', fontWeight: 'bold', color: '#1f2937' }}>
               {currentUser.teacher.name} 선생님
             </h1>
-            <p style={{ color: '#6b7280', fontSize: '14px' }}>{mySubject} 점수 입력</p>
+            <p style={{ color: '#6b7280', fontSize: '14px' }}>
+              담당 과목: {teacherSubjects.join(', ')}
+            </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            {/* 과목 선택 (여러 과목 담당 시) */}
+            {teacherSubjects.length > 1 && (
+              <select
+                value={selectedSubject}
+                onChange={(e) => setSelectedSubject(e.target.value)}
+                style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #d1d5db', fontWeight: '500' }}
+              >
+                {teacherSubjects.map((subj) => (
+                  <option key={subj} value={subj}>{subj}</option>
+                ))}
+              </select>
+            )}
             <input
               type="month"
               value={currentYearMonth}
@@ -226,7 +266,7 @@ export default function TeacherInputPage() {
           <div style={{ padding: '20px 24px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
               <h2 style={{ fontSize: '18px', fontWeight: '600' }}>
-                {currentYearMonth} {mySubject} 점수 입력
+                {currentYearMonth} {selectedSubject} 점수 입력
               </h2>
               {currentExam && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -280,7 +320,7 @@ export default function TeacherInputPage() {
 
           {myStudents.length === 0 ? (
             <div style={{ padding: '48px', textAlign: 'center', color: '#6b7280' }}>
-              {mySubject} 과목을 수강하는 학생이 없습니다.
+              {selectedSubject} 과목을 수강하는 학생이 없습니다.
             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>

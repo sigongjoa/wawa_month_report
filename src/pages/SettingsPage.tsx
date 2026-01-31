@@ -2,12 +2,13 @@ import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useReportStore } from '../stores/reportStore';
 import { testNotionConnection } from '../services/notion';
+import { testCloudinaryConnection } from '../services/cloudinary';
 
-type TabType = 'academy' | 'notion' | 'kakao';
+type TabType = 'academy' | 'data' | 'notion' | 'cloudinary' | 'kakao';
 
 export default function SettingsPage() {
   const navigate = useNavigate();
-  const { currentUser, appSettings, setAppSettings } = useReportStore();
+  const { currentUser, appSettings, setAppSettings, teachers, students, setTeachers, setStudents } = useReportStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [activeTab, setActiveTab] = useState<TabType>('academy');
@@ -29,6 +30,13 @@ export default function SettingsPage() {
   const [kakaoBizChannelId, setKakaoBizChannelId] = useState(appSettings.kakaoBizChannelId || '');
   const [kakaoBizSenderKey, setKakaoBizSenderKey] = useState(appSettings.kakaoBizSenderKey || '');
   const [kakaoBizTemplateId, setKakaoBizTemplateId] = useState(appSettings.kakaoBizTemplateId || '');
+
+  // Cloudinary 설정
+  const [cloudinaryCloudName, setCloudinaryCloudName] = useState(appSettings.cloudinaryCloudName || '');
+  const [cloudinaryApiKey, setCloudinaryApiKey] = useState(appSettings.cloudinaryApiKey || '');
+  const [cloudinaryApiSecret, setCloudinaryApiSecret] = useState(appSettings.cloudinaryApiSecret || '');
+  const [cloudinaryStatus, setCloudinaryStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [cloudinaryMessage, setCloudinaryMessage] = useState('');
 
   const [savedMessage, setSavedMessage] = useState('');
 
@@ -108,6 +116,39 @@ export default function SettingsPage() {
     }
   };
 
+  const handleTestCloudinary = async () => {
+    if (!cloudinaryCloudName || !cloudinaryApiKey || !cloudinaryApiSecret) {
+      setCloudinaryStatus('error');
+      setCloudinaryMessage('Cloud Name, API Key, API Secret을 모두 입력해주세요.');
+      return;
+    }
+
+    // 테스트 전에 설정을 임시 저장 (testCloudinaryConnection이 localStorage에서 읽기 때문)
+    setAppSettings({
+      cloudinaryCloudName,
+      cloudinaryApiKey,
+      cloudinaryApiSecret,
+    });
+
+    setCloudinaryStatus('testing');
+    setCloudinaryMessage('연결 테스트 중...');
+
+    try {
+      const result = await testCloudinaryConnection();
+
+      if (result.success) {
+        setCloudinaryStatus('success');
+        setCloudinaryMessage(result.message);
+      } else {
+        setCloudinaryStatus('error');
+        setCloudinaryMessage(result.message);
+      }
+    } catch {
+      setCloudinaryStatus('error');
+      setCloudinaryMessage('연결 테스트 중 오류가 발생했습니다.');
+    }
+  };
+
   const handleSave = () => {
     setAppSettings({
       // 학원 정보
@@ -119,6 +160,10 @@ export default function SettingsPage() {
       notionStudentsDb: notionStudentsDb || undefined,
       notionScoresDb: notionScoresDb || undefined,
       notionExamsDb: notionExamsDb || undefined,
+      // Cloudinary 설정
+      cloudinaryCloudName: cloudinaryCloudName || undefined,
+      cloudinaryApiKey: cloudinaryApiKey || undefined,
+      cloudinaryApiSecret: cloudinaryApiSecret || undefined,
       // 카카오 설정
       kakaoBizChannelId: kakaoBizChannelId || undefined,
       kakaoBizSenderKey: kakaoBizSenderKey || undefined,
@@ -173,12 +218,18 @@ export default function SettingsPage() {
       {/* 메인 콘텐츠 */}
       <main style={{ maxWidth: '800px', margin: '0 auto', padding: '24px' }}>
         {/* 탭 네비게이션 */}
-        <div style={{ backgroundColor: '#f9fafb', borderRadius: '12px 12px 0 0', display: 'flex', borderBottom: '1px solid #e5e7eb' }}>
+        <div style={{ backgroundColor: '#f9fafb', borderRadius: '12px 12px 0 0', display: 'flex', borderBottom: '1px solid #e5e7eb', overflowX: 'auto' }}>
           <button style={tabStyle(activeTab === 'academy')} onClick={() => setActiveTab('academy')}>
             학원 정보
           </button>
+          <button style={tabStyle(activeTab === 'data')} onClick={() => setActiveTab('data')}>
+            데이터 관리
+          </button>
           <button style={tabStyle(activeTab === 'notion')} onClick={() => setActiveTab('notion')}>
             Notion 연동
+          </button>
+          <button style={tabStyle(activeTab === 'cloudinary')} onClick={() => setActiveTab('cloudinary')}>
+            Cloudinary
           </button>
           <button style={tabStyle(activeTab === 'kakao')} onClick={() => setActiveTab('kakao')}>
             카카오 비즈
@@ -251,6 +302,83 @@ export default function SettingsPage() {
                     </button>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* 데이터 관리 탭 */}
+          {activeTab === 'data' && (
+            <div>
+              <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '20px', color: '#374151' }}>데이터 관리</h2>
+
+              {/* 현재 데이터 현황 */}
+              <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '16px', marginBottom: '20px' }}>
+                <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: '#374151' }}>현재 데이터</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div style={{ backgroundColor: '#ffffff', borderRadius: '8px', padding: '12px', border: '1px solid #e5e7eb' }}>
+                    <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>선생님</p>
+                    <p style={{ fontSize: '20px', fontWeight: '600', color: '#2563eb' }}>{teachers.length}명</p>
+                    {teachers.length > 0 && (
+                      <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>
+                        {teachers.map(t => t.name).join(', ')}
+                      </p>
+                    )}
+                  </div>
+                  <div style={{ backgroundColor: '#ffffff', borderRadius: '8px', padding: '12px', border: '1px solid #e5e7eb' }}>
+                    <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>학생</p>
+                    <p style={{ fontSize: '20px', fontWeight: '600', color: '#16a34a' }}>{students.length}명</p>
+                    {students.length > 0 && (
+                      <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>
+                        {students.slice(0, 5).map(s => s.name).join(', ')}{students.length > 5 ? ` 외 ${students.length - 5}명` : ''}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* 데이터 초기화 */}
+              <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '20px' }}>
+                <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px', color: '#374151' }}>초기 설정</h3>
+                <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '16px' }}>
+                  선생님/학생 데이터를 다시 설정하거나 JSON 파일로 업로드할 수 있습니다.
+                </p>
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button
+                    onClick={() => navigate('/setup')}
+                    style={{
+                      padding: '12px 24px',
+                      backgroundColor: '#FF6B00',
+                      color: '#ffffff',
+                      borderRadius: '8px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontWeight: '500',
+                    }}
+                  >
+                    초기 설정 페이지로 이동
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirm('모든 선생님/학생 데이터를 삭제하시겠습니까?')) {
+                        setTeachers([]);
+                        setStudents([]);
+                        localStorage.removeItem('wawa-setup-complete');
+                        navigate('/setup');
+                      }
+                    }}
+                    style={{
+                      padding: '12px 24px',
+                      backgroundColor: '#fee2e2',
+                      color: '#dc2626',
+                      borderRadius: '8px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontWeight: '500',
+                    }}
+                  >
+                    데이터 초기화
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -361,6 +489,96 @@ export default function SettingsPage() {
                     }}
                   >
                     {connectionStatus === 'testing' ? '테스트 중...' : '연결 테스트'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Cloudinary 탭 */}
+          {activeTab === 'cloudinary' && (
+            <div>
+              <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px', color: '#374151' }}>Cloudinary 설정</h2>
+              <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '20px' }}>
+                PDF 리포트를 Cloudinary에 업로드하여 URL로 공유합니다.
+                <a href="https://cloudinary.com/users/register_free" target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', marginLeft: '4px' }}>
+                  무료 계정 만들기
+                </a>
+              </p>
+
+              {/* Cloud Name */}
+              <div style={{ marginBottom: '16px' }}>
+                <label style={labelStyle}>Cloud Name *</label>
+                <input
+                  type="text"
+                  value={cloudinaryCloudName}
+                  onChange={(e) => setCloudinaryCloudName(e.target.value)}
+                  placeholder="your-cloud-name"
+                  style={inputStyle}
+                />
+                <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>
+                  Cloudinary 대시보드 상단에서 확인할 수 있습니다.
+                </p>
+              </div>
+
+              {/* API Key */}
+              <div style={{ marginBottom: '16px' }}>
+                <label style={labelStyle}>API Key *</label>
+                <input
+                  type="text"
+                  value={cloudinaryApiKey}
+                  onChange={(e) => setCloudinaryApiKey(e.target.value)}
+                  placeholder="123456789012345"
+                  style={inputStyle}
+                />
+                <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>
+                  Cloudinary 대시보드 &gt; Settings &gt; API Keys에서 확인
+                </p>
+              </div>
+
+              {/* API Secret */}
+              <div style={{ marginBottom: '20px' }}>
+                <label style={labelStyle}>API Secret *</label>
+                <input
+                  type="password"
+                  value={cloudinaryApiSecret}
+                  onChange={(e) => setCloudinaryApiSecret(e.target.value)}
+                  placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxx"
+                  style={inputStyle}
+                />
+              </div>
+
+              {/* 연결 테스트 */}
+              <div style={{
+                backgroundColor: cloudinaryStatus === 'success' ? '#f0fdf4' : cloudinaryStatus === 'error' ? '#fef2f2' : '#f9fafb',
+                borderRadius: '8px',
+                padding: '16px',
+                border: `1px solid ${cloudinaryStatus === 'success' ? '#bbf7d0' : cloudinaryStatus === 'error' ? '#fecaca' : '#e5e7eb'}`
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <p style={{ fontWeight: '500', color: '#374151', marginBottom: '4px' }}>연결 상태</p>
+                    <p style={{
+                      fontSize: '12px',
+                      color: cloudinaryStatus === 'success' ? '#16a34a' : cloudinaryStatus === 'error' ? '#dc2626' : '#6b7280'
+                    }}>
+                      {cloudinaryMessage || '연결 테스트를 실행해주세요.'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleTestCloudinary}
+                    disabled={cloudinaryStatus === 'testing'}
+                    style={{
+                      padding: '10px 20px',
+                      backgroundColor: cloudinaryStatus === 'testing' ? '#9ca3af' : '#f97316',
+                      color: '#ffffff',
+                      borderRadius: '8px',
+                      border: 'none',
+                      cursor: cloudinaryStatus === 'testing' ? 'not-allowed' : 'pointer',
+                      fontWeight: '500',
+                    }}
+                  >
+                    {cloudinaryStatus === 'testing' ? '테스트 중...' : '연결 테스트'}
                   </button>
                 </div>
               </div>

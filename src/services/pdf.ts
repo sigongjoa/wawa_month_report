@@ -35,9 +35,6 @@ export const elementToPdf = async (
     logging: false,
   });
 
-  const imgData = canvas.toDataURL('image/png');
-
-  // 모바일 스타일 리포트는 세로가 길 수 있으므로 적절한 크기로 맞춤
   // A4: 210mm x 297mm
   const pdf = new jsPDF({
     orientation: 'portrait',
@@ -47,55 +44,64 @@ export const elementToPdf = async (
 
   const pageWidth = 210;
   const pageHeight = 297;
-  const margin = 5; // 여백
+  const margin = 5;
 
   const imgWidth = pageWidth - (margin * 2);
   const imgHeight = (canvas.height * imgWidth) / canvas.width;
+  const contentHeight = pageHeight - (margin * 2);
 
   // 한 페이지에 맞는 경우
-  if (imgHeight <= pageHeight - (margin * 2)) {
+  if (imgHeight <= contentHeight) {
+    const imgData = canvas.toDataURL('image/png');
     pdf.addImage(imgData, 'PNG', margin, margin, imgWidth, imgHeight);
   } else {
     // 여러 페이지가 필요한 경우
+    let heightLeft = imgHeight;
     let position = 0;
-    const contentHeight = pageHeight - (margin * 2);
-    const totalPages = Math.ceil(imgHeight / contentHeight);
+    let pageNum = 0;
 
-    for (let page = 0; page < totalPages; page++) {
-      if (page > 0) {
+    while (heightLeft > 0) {
+      if (pageNum > 0) {
         pdf.addPage();
       }
 
-      // 이미지를 페이지에 맞게 잘라서 추가
+      // 현재 페이지에 표시할 높이 계산
+      const currentHeight = Math.min(contentHeight, heightLeft);
+
+      // 원본 캔버스에서 현재 페이지 부분 추출
       const sourceY = (position / imgHeight) * canvas.height;
-      const sourceHeight = Math.min(
-        (contentHeight / imgHeight) * canvas.height,
-        canvas.height - sourceY
-      );
+      const sourceHeight = (currentHeight / imgHeight) * canvas.height;
 
-      // 현재 페이지에 표시할 이미지 높이
-      const destHeight = Math.min(contentHeight, imgHeight - position);
-
-      // 캔버스에서 해당 부분만 추출
+      // 새 캔버스 생성
       const pageCanvas = document.createElement('canvas');
       pageCanvas.width = canvas.width;
-      pageCanvas.height = sourceHeight;
+      pageCanvas.height = Math.ceil(sourceHeight);
+
       const ctx = pageCanvas.getContext('2d');
-
-      if (ctx) {
-        ctx.drawImage(
-          canvas,
-          0, sourceY,
-          canvas.width, sourceHeight,
-          0, 0,
-          canvas.width, sourceHeight
-        );
-
-        const pageImgData = pageCanvas.toDataURL('image/png');
-        pdf.addImage(pageImgData, 'PNG', margin, margin, imgWidth, destHeight);
+      if (!ctx) {
+        throw new Error('Failed to get canvas context');
       }
 
+      // 배경 채우기
+      ctx.fillStyle = '#F8F9FA';
+      ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+
+      // 원본 캔버스에서 해당 부분 복사
+      ctx.drawImage(
+        canvas,
+        0, Math.floor(sourceY),
+        canvas.width, Math.ceil(sourceHeight),
+        0, 0,
+        canvas.width, Math.ceil(sourceHeight)
+      );
+
+      // PNG로 변환하여 PDF에 추가
+      const pageImgData = pageCanvas.toDataURL('image/png', 1.0);
+      pdf.addImage(pageImgData, 'PNG', margin, margin, imgWidth, currentHeight);
+
+      heightLeft -= contentHeight;
       position += contentHeight;
+      pageNum++;
     }
   }
 

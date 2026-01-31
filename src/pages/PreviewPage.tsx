@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useReportStore } from '../stores/reportStore';
 import { downloadReportAsPdf } from '../services/pdf';
+import { uploadReportToCloudinary, getCloudinaryConfig } from '../services/cloudinary';
 import { useState } from 'react';
 import type { SubjectScore } from '../types';
 
@@ -36,7 +37,7 @@ const generateMonthLabels = (currentYearMonth: string): string[] => {
 
 export default function PreviewPage() {
   const navigate = useNavigate();
-  const { currentReport, currentUser, appSettings, currentYearMonth, reports } = useReportStore();
+  const { currentReport, currentUser, appSettings, currentYearMonth, reports, updateReportPdfUrl } = useReportStore();
   const [downloading, setDownloading] = useState(false);
 
   if (!currentReport) {
@@ -90,10 +91,36 @@ export default function PreviewPage() {
     return points.join(' ');
   };
 
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
+
   const handleDownload = async () => {
     setDownloading(true);
+    setUploadStatus('idle');
+
     try {
+      // 1. PDF 다운로드
       await downloadReportAsPdf('report-content', `${currentReport.studentName}_${currentReport.yearMonth}_리포트.pdf`);
+
+      // 2. Cloudinary 설정이 있으면 자동 업로드
+      const cloudinaryConfig = getCloudinaryConfig();
+      if (cloudinaryConfig.cloudName && cloudinaryConfig.apiKey && cloudinaryConfig.apiSecret) {
+        setUploadStatus('uploading');
+        const result = await uploadReportToCloudinary(
+          'report-content',
+          currentReport.studentName,
+          currentReport.yearMonth
+        );
+
+        if (result.success && result.url) {
+          setUploadStatus('success');
+          // Store에 PDF URL 저장
+          updateReportPdfUrl(currentReport.id, result.url);
+          console.log('[Cloudinary] 업로드 완료:', result.url);
+        } else {
+          setUploadStatus('error');
+          console.error('[Cloudinary] 업로드 실패:', result.error);
+        }
+      }
     } catch (error) {
       console.error('PDF download error:', error);
       alert('PDF 다운로드 중 오류가 발생했습니다.');
@@ -124,21 +151,29 @@ export default function PreviewPage() {
           >
             돌아가기
           </button>
-          <button
-            onClick={handleDownload}
-            disabled={downloading}
-            style={{
-              padding: '10px 20px',
-              backgroundColor: downloading ? '#FEB273' : '#FF6B00',
-              color: '#ffffff',
-              borderRadius: '8px',
-              border: 'none',
-              cursor: downloading ? 'not-allowed' : 'pointer',
-              fontWeight: '600',
-            }}
-          >
-            {downloading ? 'PDF 생성 중...' : 'PDF 다운로드'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {uploadStatus === 'success' && (
+              <span style={{ color: '#16a34a', fontSize: '13px' }}>업로드 완료</span>
+            )}
+            {uploadStatus === 'error' && (
+              <span style={{ color: '#dc2626', fontSize: '13px' }}>업로드 실패</span>
+            )}
+            <button
+              onClick={handleDownload}
+              disabled={downloading || uploadStatus === 'uploading'}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: downloading || uploadStatus === 'uploading' ? '#FEB273' : '#FF6B00',
+                color: '#ffffff',
+                borderRadius: '8px',
+                border: 'none',
+                cursor: downloading || uploadStatus === 'uploading' ? 'not-allowed' : 'pointer',
+                fontWeight: '600',
+              }}
+            >
+              {downloading ? 'PDF 생성 중...' : uploadStatus === 'uploading' ? '업로드 중...' : 'PDF 다운로드'}
+            </button>
+          </div>
         </div>
 
         {/* 리포트 내용 - 모바일 스타일 */}

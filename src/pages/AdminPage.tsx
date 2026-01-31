@@ -42,8 +42,14 @@ export default function AdminPage() {
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    if (!currentUser || !currentUser.teacher.isAdmin) {
+    if (!currentUser) {
       navigate('/');
+      return;
+    }
+
+    // 관리자가 아니면 일반 선생님 페이지로
+    if (!currentUser.teacher.isAdmin) {
+      navigate('/teacher');
       return;
     }
 
@@ -297,6 +303,12 @@ export default function AdminPage() {
               style={{ padding: '8px 16px', backgroundColor: 'rgba(255,255,255,0.2)', color: '#ffffff', borderRadius: '8px', border: 'none', cursor: 'pointer' }}
             >
               시험지
+            </button>
+            <button
+              onClick={() => navigate('/bulk-send')}
+              style={{ padding: '8px 16px', backgroundColor: '#facc15', color: '#1f2937', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '600' }}
+            >
+              일괄 전송
             </button>
             <button
               onClick={() => navigate('/settings')}

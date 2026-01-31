@@ -1,4 +1,4 @@
-import type { Teacher, Student, MonthlyReport, SubjectScore, Exam, DifficultyGrade, AppSettings } from '../types';
+import type { Teacher, Student, Score, MonthlyReport, SubjectScore, Exam, DifficultyGrade, AppSettings } from '../types';
 
 // localStorage에서 앱 설정 가져오기
 const getAppSettings = (): Partial<AppSettings> => {
@@ -31,6 +31,17 @@ const getDbIds = () => {
   };
 };
 
+// Notion API Base URL (개발: 프록시, 프로덕션: 직접)
+const getNotionBaseUrl = () => {
+  // Electron 환경이거나 file:// 프로토콜이면 직접 호출 불가 (CORS)
+  // 개발 서버에서는 프록시 사용
+  if (import.meta.env.DEV) {
+    return '/api/notion/v1';
+  }
+  // 프로덕션(Electron)에서는 프록시 서버 필요하거나 목업 사용
+  return '/api/notion/v1';
+};
+
 // Notion API 호출 헬퍼
 const notionFetch = async (endpoint: string, options: RequestInit = {}, apiKey?: string) => {
   const key = apiKey || getApiKey();
@@ -38,11 +49,11 @@ const notionFetch = async (endpoint: string, options: RequestInit = {}, apiKey?:
     throw new Error('Notion API Key가 설정되지 않았습니다.');
   }
 
-  const response = await fetch(`https://api.notion.com/v1${endpoint}`, {
+  const baseUrl = getNotionBaseUrl();
+  const response = await fetch(`${baseUrl}${endpoint}`, {
     ...options,
     headers: {
       'Authorization': `Bearer ${key}`,
-      'Notion-Version': '2022-06-28',
       'Content-Type': 'application/json',
       ...options.headers,
     },
@@ -129,7 +140,7 @@ export const fetchTeachers = async (): Promise<Teacher[]> => {
   const dbIds = getDbIds();
   if (!dbIds.teachers) {
     console.warn('Teachers DB ID not configured');
-    return getMockTeachers();
+    return [];
   }
 
   try {
@@ -138,16 +149,21 @@ export const fetchTeachers = async (): Promise<Teacher[]> => {
       body: JSON.stringify({}),
     });
 
-    return data.results.map((page: any) => ({
-      id: page.id,
-      name: page.properties['이름']?.title?.[0]?.plain_text || '',
-      subject: page.properties['과목']?.select?.name || '',
-      pin: page.properties['PIN']?.rich_text?.[0]?.plain_text || '0000',
-      isAdmin: page.properties['관리자']?.checkbox || false,
-    }));
+    return data.results.map((page: any) => {
+      const subjectStr = page.properties['과목']?.rich_text?.[0]?.plain_text || '';
+      // 쉼표로 구분된 과목을 배열로 변환
+      const subjects = subjectStr.split(',').map((s: string) => s.trim()).filter(Boolean);
+      return {
+        id: page.id,
+        name: page.properties['선생님']?.title?.[0]?.plain_text || '',
+        subjects,
+        pin: String(page.properties['PIN']?.number || '0000'),
+        isAdmin: page.properties['관리자']?.checkbox || false,
+      };
+    });
   } catch (error) {
     console.error('Failed to fetch teachers:', error);
-    return getMockTeachers();
+    return [];
   }
 };
 
@@ -157,7 +173,7 @@ export const fetchStudents = async (): Promise<Student[]> => {
   const dbIds = getDbIds();
   if (!dbIds.students) {
     console.warn('Students DB ID not configured');
-    return getMockStudents();
+    return [];
   }
 
   try {
@@ -171,16 +187,14 @@ export const fetchStudents = async (): Promise<Student[]> => {
     return data.results.map((page: any) => ({
       id: page.id,
       name: page.properties['이름']?.title?.[0]?.plain_text || '',
-      grade: page.properties['학년']?.select?.name || '',
+      grade: page.properties['학년']?.select?.name || page.properties['학년']?.rich_text?.[0]?.plain_text || '',
       subjects: page.properties['수강과목']?.multi_select?.map((s: any) => s.name) || [],
-      parentName: page.properties['학부모']?.rich_text?.[0]?.plain_text || '',
-      examDate: page.properties['시험일']?.date?.start || undefined,
-      status: page.properties['상태']?.select?.name === '비활성' ? 'inactive' : 'active',
-      absenceReason: page.properties['결시사유']?.rich_text?.[0]?.plain_text || undefined,
+      parentName: page.properties['학부모연락처']?.rich_text?.[0]?.plain_text || page.properties['학부모']?.rich_text?.[0]?.plain_text || '',
+      parentPhone: page.properties['전화번호']?.phone_number || page.properties['학부모전화']?.rich_text?.[0]?.plain_text || '',
     }));
   } catch (error) {
     console.error('Failed to fetch students:', error);
-    return getMockStudents();
+    return [];
   }
 };
 
@@ -336,8 +350,44 @@ export const updateStudentExamDates = async (
   }
 };
 
-// ============ 점수 ============
+// ============ 성적 (새 구조) ============
 
+// 성적 DB에서 특정 년월의 모든 성적 가져오기
+export const fetchScoresByYearMonth = async (yearMonth: string): Promise<Score[]> => {
+  const dbIds = getDbIds();
+  if (!dbIds.scores) {
+    console.warn('Scores DB ID not configured');
+    return [];
+  }
+
+  try {
+    const data = await notionFetch(`/databases/${dbIds.scores}/query`, {
+      method: 'POST',
+      body: JSON.stringify({
+        filter: {
+          property: '시험년월',
+          rich_text: { equals: yearMonth },
+        },
+      }),
+    });
+
+    return data.results.map((page: any) => ({
+      id: page.id,
+      studentId: page.properties['학생']?.relation?.[0]?.id || '',
+      yearMonth: page.properties['시험년월']?.rich_text?.[0]?.plain_text || '',
+      subject: page.properties['과목']?.select?.name || '',
+      score: page.properties['점수']?.number || 0,
+      teacherId: page.properties['선생님']?.relation?.[0]?.id || '',
+      comment: page.properties['코멘트']?.rich_text?.[0]?.plain_text || '',
+      difficulty: page.properties['난이도']?.select?.name as DifficultyGrade || undefined,
+    }));
+  } catch (error) {
+    console.error('Failed to fetch scores:', error);
+    return [];
+  }
+};
+
+// 학생별로 그룹화된 월별 리포트 생성
 export const fetchScores = async (yearMonth: string): Promise<MonthlyReport[]> => {
   const dbIds = getDbIds();
   if (!dbIds.scores) {
@@ -350,7 +400,7 @@ export const fetchScores = async (yearMonth: string): Promise<MonthlyReport[]> =
       method: 'POST',
       body: JSON.stringify({
         filter: {
-          property: '년월',
+          property: '시험년월',
           rich_text: { equals: yearMonth },
         },
       }),
@@ -361,13 +411,14 @@ export const fetchScores = async (yearMonth: string): Promise<MonthlyReport[]> =
 
     for (const page of data.results) {
       const studentId = page.properties['학생']?.relation?.[0]?.id || '';
-      const studentName = page.properties['학생이름']?.rich_text?.[0]?.plain_text || '';
+
+      if (!studentId) continue;
 
       if (!reportMap.has(studentId)) {
         reportMap.set(studentId, {
           id: `${studentId}-${yearMonth}`,
           studentId,
-          studentName,
+          studentName: '', // 나중에 학생 정보와 조인
           yearMonth,
           scores: [],
           status: 'draft',
@@ -381,7 +432,7 @@ export const fetchScores = async (yearMonth: string): Promise<MonthlyReport[]> =
         subject: page.properties['과목']?.select?.name || '',
         score: page.properties['점수']?.number || 0,
         teacherId: page.properties['선생님']?.relation?.[0]?.id || '',
-        teacherName: page.properties['선생님이름']?.rich_text?.[0]?.plain_text || '',
+        teacherName: '',
         comment: page.properties['코멘트']?.rich_text?.[0]?.plain_text || '',
         difficulty: page.properties['난이도']?.select?.name as DifficultyGrade || undefined,
         updatedAt: page.last_edited_time,
@@ -395,12 +446,16 @@ export const fetchScores = async (yearMonth: string): Promise<MonthlyReport[]> =
   }
 };
 
-// 점수 저장/업데이트
+// 성적 저장/업데이트 (새 구조)
 export const saveScore = async (
   studentId: string,
   studentName: string,
   yearMonth: string,
-  score: SubjectScore
+  subject: string,
+  score: number,
+  teacherId: string,
+  comment?: string,
+  difficulty?: DifficultyGrade
 ): Promise<boolean> => {
   const dbIds = getDbIds();
   if (!dbIds.scores) {
@@ -409,38 +464,43 @@ export const saveScore = async (
   }
 
   try {
-    // 기존 점수 찾기
+    // 기존 성적 찾기 (학생 + 년월 + 과목)
     const existing = await notionFetch(`/databases/${dbIds.scores}/query`, {
       method: 'POST',
       body: JSON.stringify({
         filter: {
           and: [
             { property: '학생', relation: { contains: studentId } },
-            { property: '년월', rich_text: { equals: yearMonth } },
-            { property: '과목', select: { equals: score.subject } },
+            { property: '시험년월', rich_text: { equals: yearMonth } },
+            { property: '과목', select: { equals: subject } },
           ],
         },
       }),
     });
 
+    // DB 컬럼 타입에 맞춰서 저장
     const properties: any = {
-      '학생이름': { rich_text: [{ text: { content: studentName } }] },
-      '년월': { rich_text: [{ text: { content: yearMonth } }] },
-      '과목': { select: { name: score.subject } },
-      '점수': { number: score.score },
-      '선생님이름': { rich_text: [{ text: { content: score.teacherName } }] },
-      '코멘트': { rich_text: [{ text: { content: score.comment || '' } }] },
+      '이름': { title: [{ text: { content: `${studentName}_${subject}_${yearMonth}` } }] },
+      '시험년월': { rich_text: [{ text: { content: yearMonth } }] },
+      '과목': { select: { name: subject } },
+      '점수': { number: score },
+      '코멘트': { rich_text: [{ text: { content: comment || '' } }] },
     };
 
-    if (score.difficulty) {
-      properties['난이도'] = { select: { name: score.difficulty } };
+    if (difficulty) {
+      properties['난이도'] = { select: { name: difficulty } };
     }
 
     if (existing.results.length > 0) {
       // 업데이트
       await notionFetch(`/pages/${existing.results[0].id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ properties }),
+        body: JSON.stringify({
+          properties: {
+            ...properties,
+            '선생님': teacherId ? { relation: [{ id: teacherId }] } : undefined,
+          }
+        }),
       });
     } else {
       // 새로 생성
@@ -451,7 +511,7 @@ export const saveScore = async (
           properties: {
             ...properties,
             '학생': { relation: [{ id: studentId }] },
-            '선생님': score.teacherId ? { relation: [{ id: score.teacherId }] } : undefined,
+            '선생님': teacherId ? { relation: [{ id: teacherId }] } : undefined,
           },
         }),
       });
@@ -464,6 +524,25 @@ export const saveScore = async (
   }
 };
 
+// 레거시 호환용 - SubjectScore 기반 저장
+export const saveScoreLegacy = async (
+  studentId: string,
+  studentName: string,
+  yearMonth: string,
+  score: SubjectScore
+): Promise<boolean> => {
+  return saveScore(
+    studentId,
+    studentName,
+    yearMonth,
+    score.subject,
+    score.score,
+    score.teacherId,
+    score.comment,
+    score.difficulty
+  );
+};
+
 // 점수 일괄 수정 (관리자용)
 export const updateScores = async (
   studentId: string,
@@ -473,7 +552,16 @@ export const updateScores = async (
 ): Promise<boolean> => {
   try {
     await Promise.all(
-      scores.map(score => saveScore(studentId, studentName, yearMonth, score))
+      scores.map(score => saveScore(
+        studentId,
+        studentName,
+        yearMonth,
+        score.subject,
+        score.score,
+        score.teacherId,
+        score.comment,
+        score.difficulty
+      ))
     );
     return true;
   } catch (error) {
@@ -488,7 +576,7 @@ export const fetchExams = async (yearMonth?: string): Promise<Exam[]> => {
   const dbIds = getDbIds();
   if (!dbIds.exams) {
     console.warn('Exams DB ID not configured');
-    return getMockExams();
+    return [];
   }
 
   try {
@@ -513,7 +601,7 @@ export const fetchExams = async (yearMonth?: string): Promise<Exam[]> => {
     }));
   } catch (error) {
     console.error('Failed to fetch exams:', error);
-    return getMockExams();
+    return [];
   }
 };
 
@@ -572,34 +660,3 @@ export const updateExamDifficulty = async (examId: string, difficulty: Difficult
   }
 };
 
-// ============ 목업 데이터 (Notion 미연결시 사용) ============
-
-const getMockTeachers = (): Teacher[] => [
-  { id: 't1', name: '김수학', subject: '수학', pin: '1234', isAdmin: true },
-  { id: 't2', name: '이영어', subject: '영어', pin: '2345', isAdmin: false },
-  { id: 't3', name: '박국어', subject: '국어', pin: '3456', isAdmin: false },
-  { id: 't4', name: '최과학', subject: '과학', pin: '4567', isAdmin: false },
-];
-
-const getMockStudents = (): Student[] => {
-  const today = new Date().toISOString().split('T')[0];
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
-  return [
-    { id: 's1', name: '홍길동', grade: '중1', subjects: ['수학', '영어', '국어'], parentName: '홍부모', examDate: today, status: 'active' },
-    { id: 's2', name: '김철수', grade: '중2', subjects: ['수학', '영어', '과학'], parentName: '김부모', examDate: today, status: 'active' },
-    { id: 's3', name: '이영희', grade: '중1', subjects: ['수학', '국어'], parentName: '이부모', examDate: tomorrow, status: 'active' },
-    { id: 's4', name: '박민수', grade: '중3', subjects: ['수학', '영어', '국어', '과학'], parentName: '박부모', status: 'active' },
-    { id: 's5', name: '정수진', grade: '고1', subjects: ['수학', '영어'], parentName: '정부모', examDate: tomorrow, status: 'active' },
-  ];
-};
-
-const getMockExams = (): Exam[] => {
-  const now = new Date();
-  const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  return [
-    { id: 'e1', subject: '수학', yearMonth: currentYearMonth, difficulty: 'B', uploadedBy: '김수학', uploadedAt: new Date().toISOString(), scope: '이차방정식' },
-    { id: 'e2', subject: '영어', yearMonth: currentYearMonth, difficulty: 'C', uploadedBy: '이영어', uploadedAt: new Date().toISOString(), scope: '관계대명사' },
-    { id: 'e3', subject: '국어', yearMonth: currentYearMonth, difficulty: 'A', uploadedBy: '박국어', uploadedAt: new Date().toISOString(), scope: '현대시' },
-    { id: 'e4', subject: '과학', yearMonth: currentYearMonth, difficulty: 'D', uploadedBy: '최과학', uploadedAt: new Date().toISOString(), scope: '화학반응' },
-  ];
-};

@@ -23,6 +23,7 @@ interface ReportState {
   setCurrentReport: (report: MonthlyReport | null) => void;
   updateReport: (report: MonthlyReport) => void;
   addReport: (report: MonthlyReport) => void;
+  updateReportPdfUrl: (reportId: string, pdfUrl: string) => void;
 
   // 전송 이력
   sendHistories: SendHistory[];
@@ -88,6 +89,14 @@ export const useReportStore = create<ReportState>()(
         currentReport: state.currentReport?.id === report.id ? report : state.currentReport,
       })),
       addReport: (report) => set((state) => ({ reports: [...state.reports, report] })),
+      updateReportPdfUrl: (reportId, pdfUrl) => set((state) => ({
+        reports: state.reports.map((r) =>
+          r.id === reportId ? { ...r, pdfUrl, pdfUploadedAt: new Date().toISOString() } : r
+        ),
+        currentReport: state.currentReport?.id === reportId
+          ? { ...state.currentReport, pdfUrl, pdfUploadedAt: new Date().toISOString() }
+          : state.currentReport,
+      })),
 
       // 전송
       sendHistories: [],

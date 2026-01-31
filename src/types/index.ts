@@ -17,7 +17,7 @@ export interface Exam {
 export interface Teacher {
   id: string;
   name: string;
-  subject: string; // 담당 과목
+  subjects: string[]; // 담당 과목들 (여러 과목 가능)
   pin: string; // 4자리 PIN
   isAdmin: boolean;
 }
@@ -29,10 +29,21 @@ export interface Student {
   grade: string; // 학년
   subjects: string[]; // 수강 과목들
   parentName?: string; // 학부모 이름 (카카오톡 전송용)
-  parentKakaoId?: string; // 학부모 카카오 UUID (비즈앱 연동 후 사용)
-  examDate?: string; // 시험 예정일 (YYYY-MM-DD)
-  status?: 'active' | 'inactive'; // 재원 상태
-  absenceReason?: string; // 결시 사유
+  parentPhone?: string; // 학부모 전화번호 (알림톡용)
+}
+
+// 성적 (성적 DB의 한 행)
+export interface Score {
+  id: string;
+  studentId: string; // relation
+  studentName?: string; // 조회 편의용
+  yearMonth: string; // "2026-02"
+  subject: string;
+  score: number;
+  teacherId: string; // relation
+  teacherName?: string; // 조회 편의용
+  comment?: string; // 선생님 한줄 코멘트
+  difficulty?: DifficultyGrade;
 }
 
 // 과목별 점수
@@ -57,6 +68,8 @@ export interface MonthlyReport {
   status: 'draft' | 'complete' | 'sent';
   createdAt: string;
   updatedAt: string;
+  pdfUrl?: string; // Cloudinary PDF URL
+  pdfUploadedAt?: string; // PDF 업로드 시간
 }
 
 // 전송 이력
@@ -66,10 +79,12 @@ export interface SendHistory {
   studentName: string;
   reportId: string;
   recipientName: string;
-  recipientType: 'parent' | 'self';
+  recipientPhone?: string;           // 학부모 전화번호 (알림톡용)
+  recipientType: 'parent' | 'self' | 'alimtalk';
   sentAt: string;
   status: 'success' | 'failed' | 'pending';
   errorMessage?: string;
+  pdfUrl?: string;                   // Cloudinary PDF URL
 }
 
 // 카카오 친구 (비즈앱용)
@@ -98,6 +113,34 @@ export interface AppSettings {
   kakaoBizChannelId?: string;
   kakaoBizSenderKey?: string;
   kakaoBizTemplateId?: string;
+  // Cloudinary 설정 (Signed Upload)
+  cloudinaryCloudName?: string;
+  cloudinaryApiKey?: string;
+  cloudinaryApiSecret?: string;
+}
+
+// Cloudinary 업로드 결과
+export interface CloudinaryUploadResult {
+  success: boolean;
+  url?: string;
+  publicId?: string;
+  error?: string;
+}
+
+// 알림톡 전송 요청
+export interface AlimtalkRequest {
+  recipientPhone: string;            // 수신자 전화번호 (01012345678)
+  studentName: string;
+  yearMonth: string;
+  pdfUrl: string;                    // Cloudinary PDF URL
+  academyName?: string;
+}
+
+// 알림톡 전송 결과
+export interface AlimtalkResult {
+  success: boolean;
+  messageId?: string;
+  error?: string;
 }
 
 // 현재 로그인한 선생님
