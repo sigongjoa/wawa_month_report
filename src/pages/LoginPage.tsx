@@ -153,13 +153,21 @@ export default function LoginPage() {
         {teachers.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#6b7280', padding: '20px' }}>
             <p style={{ marginBottom: '12px' }}>등록된 선생님이 없습니다.</p>
-            <p style={{ fontSize: '14px', color: '#9ca3af' }}>Notion DB에 선생님을 추가해주세요.</p>
-            <button
-              onClick={() => window.location.reload()}
-              style={{ marginTop: '16px', padding: '8px 16px', backgroundColor: '#e5e7eb', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
-            >
-              새로고침
-            </button>
+            <p style={{ fontSize: '14px', color: '#9ca3af' }}>Notion 설정을 확인하거나 DB에 선생님을 추가해주세요.</p>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '16px' }}>
+              <button
+                onClick={() => navigate('/setup')}
+                style={{ padding: '10px 20px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '500' }}
+              >
+                설정
+              </button>
+              <button
+                onClick={() => window.location.reload()}
+                style={{ padding: '10px 20px', backgroundColor: '#e5e7eb', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+              >
+                새로고침
+              </button>
+            </div>
           </div>
         ) : (
           <>
