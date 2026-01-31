@@ -30,6 +30,9 @@ export interface Student {
   subjects: string[]; // 수강 과목들
   parentName?: string; // 학부모 이름 (카카오톡 전송용)
   parentPhone?: string; // 학부모 전화번호 (알림톡용)
+  examDate?: string; // 시험 예정일 (YYYY-MM-DD)
+  status?: 'active' | 'inactive'; // 학생 상태
+  absenceReason?: string; // 결시 사유
 }
 
 // 성적 (성적 DB의 한 행)
