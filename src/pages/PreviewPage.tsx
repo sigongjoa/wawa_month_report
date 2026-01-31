@@ -3,13 +3,41 @@ import { useReportStore } from '../stores/reportStore';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { downloadReportAsPdf } from '../services/pdf';
 import { useState } from 'react';
+import type { DifficultyGrade } from '../types';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
+// 난이도별 색상
+const DIFFICULTY_COLORS: Record<DifficultyGrade, string> = {
+  'A': '#ef4444', // 빨강
+  'B': '#f97316', // 주황
+  'C': '#eab308', // 노랑
+  'D': '#84cc16', // 연두
+  'E': '#22c55e', // 초록
+  'F': '#3b82f6', // 파랑
+};
+
 export default function PreviewPage() {
   const navigate = useNavigate();
-  const { currentReport, currentUser } = useReportStore();
+  const { currentReport, currentUser, appSettings, exams, currentYearMonth } = useReportStore();
   const [downloading, setDownloading] = useState(false);
+
+  // 현재 월의 시험 난이도 매핑
+  const getExamDifficulty = (subject: string): DifficultyGrade | undefined => {
+    const exam = exams.find((e) => e.subject === subject && e.yearMonth === currentYearMonth);
+    return exam?.difficulty;
+  };
+
+  // 난이도 뱃지 스타일
+  const getDifficultyBadgeStyle = (difficulty: DifficultyGrade) => ({
+    display: 'inline-block',
+    padding: '2px 8px',
+    borderRadius: '9999px',
+    fontSize: '11px',
+    fontWeight: '600',
+    color: '#ffffff',
+    backgroundColor: DIFFICULTY_COLORS[difficulty],
+  });
 
   if (!currentReport) {
     return (
@@ -95,9 +123,42 @@ export default function PreviewPage() {
           }}
         >
           {/* 헤더 */}
-          <div style={{ backgroundColor: '#1e40af', color: '#ffffff', padding: '32px', textAlign: 'center' }}>
-            <h1 style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '8px' }}>월말평가 리포트</h1>
-            <p style={{ fontSize: '18px', opacity: 0.9 }}>{currentReport.yearMonth}</p>
+          <div style={{ backgroundColor: '#1e40af', color: '#ffffff', padding: '32px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px' }}>
+              {/* 로고 또는 플레이스홀더 */}
+              {appSettings.academyLogo ? (
+                <img
+                  src={appSettings.academyLogo}
+                  alt="학원 로고"
+                  style={{ width: '60px', height: '60px', objectFit: 'contain', borderRadius: '8px', backgroundColor: '#ffffff', padding: '4px' }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: '60px',
+                    height: '60px',
+                    borderRadius: '8px',
+                    backgroundColor: 'rgba(255,255,255,0.2)',
+                    border: '2px dashed rgba(255,255,255,0.5)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '10px',
+                    textAlign: 'center',
+                    padding: '4px',
+                  }}
+                >
+                  로고
+                </div>
+              )}
+              <div style={{ textAlign: 'center' }}>
+                <p style={{ fontSize: '14px', opacity: 0.9, marginBottom: '4px' }}>
+                  {appSettings.academyName || '학원명'}
+                </p>
+                <h1 style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '4px' }}>월말평가 리포트</h1>
+                <p style={{ fontSize: '18px', opacity: 0.9 }}>{currentReport.yearMonth}</p>
+              </div>
+            </div>
           </div>
 
           {/* 학생 정보 */}
@@ -142,27 +203,40 @@ export default function PreviewPage() {
                 <thead>
                   <tr style={{ backgroundColor: '#f9fafb' }}>
                     <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: '600', borderBottom: '2px solid #e5e7eb' }}>과목</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '600', borderBottom: '2px solid #e5e7eb' }}>난이도</th>
                     <th style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '600', borderBottom: '2px solid #e5e7eb' }}>점수</th>
                     <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: '600', borderBottom: '2px solid #e5e7eb' }}>담당</th>
                     <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: '600', borderBottom: '2px solid #e5e7eb' }}>코멘트</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {currentReport.scores.map((score, index) => (
-                    <tr key={score.subject} style={{ borderBottom: '1px solid #e5e7eb' }}>
-                      <td style={{ padding: '12px 16px' }}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: COLORS[index % COLORS.length] }} />
-                          {score.subject}
-                        </span>
-                      </td>
-                      <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '600', fontSize: '18px' }}>
-                        {score.score}
-                      </td>
-                      <td style={{ padding: '12px 16px', color: '#6b7280' }}>{score.teacherName}</td>
-                      <td style={{ padding: '12px 16px', color: '#6b7280', fontSize: '14px' }}>{score.comment || '-'}</td>
-                    </tr>
-                  ))}
+                  {currentReport.scores.map((score, index) => {
+                    const difficulty = score.difficulty || getExamDifficulty(score.subject);
+                    return (
+                      <tr key={score.subject} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                        <td style={{ padding: '12px 16px' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: COLORS[index % COLORS.length] }} />
+                            {score.subject}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                          {difficulty ? (
+                            <span style={getDifficultyBadgeStyle(difficulty)}>
+                              {difficulty}
+                            </span>
+                          ) : (
+                            <span style={{ color: '#9ca3af', fontSize: '12px' }}>-</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '600', fontSize: '18px' }}>
+                          {score.score}
+                        </td>
+                        <td style={{ padding: '12px 16px', color: '#6b7280' }}>{score.teacherName}</td>
+                        <td style={{ padding: '12px 16px', color: '#6b7280', fontSize: '14px' }}>{score.comment || '-'}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

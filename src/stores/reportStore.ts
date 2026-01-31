@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Teacher, Student, MonthlyReport, SendHistory, CurrentUser } from '../types';
+import type { Teacher, Student, MonthlyReport, SendHistory, CurrentUser, Exam, AppSettings } from '../types';
 
 interface ReportState {
   // 로그인
@@ -32,6 +32,16 @@ interface ReportState {
   currentYearMonth: string;
   setCurrentYearMonth: (yearMonth: string) => void;
 
+  // 시험지 목록
+  exams: Exam[];
+  setExams: (exams: Exam[]) => void;
+  addExam: (exam: Exam) => void;
+  updateExam: (exam: Exam) => void;
+
+  // 앱 설정
+  appSettings: AppSettings;
+  setAppSettings: (settings: Partial<AppSettings>) => void;
+
   // 초기화
   reset: () => void;
 }
@@ -39,6 +49,17 @@ interface ReportState {
 const getCurrentYearMonth = () => {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const defaultAppSettings: AppSettings = {
+  notionDbId: '',
+  notionApiKey: '',
+  kakaoJsKey: '',
+  academyName: '',
+  academyLogo: undefined,
+  kakaoBizChannelId: undefined,
+  kakaoBizSenderKey: undefined,
+  kakaoBizTemplateId: undefined,
 };
 
 export const useReportStore = create<ReportState>()(
@@ -78,6 +99,20 @@ export const useReportStore = create<ReportState>()(
       currentYearMonth: getCurrentYearMonth(),
       setCurrentYearMonth: (yearMonth) => set({ currentYearMonth: yearMonth }),
 
+      // 시험지
+      exams: [],
+      setExams: (exams) => set({ exams }),
+      addExam: (exam) => set((state) => ({ exams: [...state.exams, exam] })),
+      updateExam: (exam) => set((state) => ({
+        exams: state.exams.map((e) => e.id === exam.id ? exam : e),
+      })),
+
+      // 앱 설정
+      appSettings: defaultAppSettings,
+      setAppSettings: (settings) => set((state) => ({
+        appSettings: { ...state.appSettings, ...settings },
+      })),
+
       // 초기화
       reset: () => set({
         currentUser: null,
@@ -87,6 +122,8 @@ export const useReportStore = create<ReportState>()(
         currentReport: null,
         sendHistories: [],
         currentYearMonth: getCurrentYearMonth(),
+        exams: [],
+        appSettings: defaultAppSettings,
       }),
     }),
     {
@@ -98,6 +135,8 @@ export const useReportStore = create<ReportState>()(
         reports: state.reports,
         sendHistories: state.sendHistories,
         currentYearMonth: state.currentYearMonth,
+        exams: state.exams,
+        appSettings: state.appSettings,
       }),
     }
   )

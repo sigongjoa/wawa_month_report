@@ -1,8 +1,27 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useReportStore } from '../stores/reportStore';
-import { fetchStudents } from '../services/notion';
-import type { SubjectScore } from '../types';
+import { fetchStudents, fetchExams } from '../services/notion';
+import type { SubjectScore, DifficultyGrade } from '../types';
+
+// 난이도별 색상
+const DIFFICULTY_COLORS: Record<DifficultyGrade, string> = {
+  'A': '#ef4444',
+  'B': '#f97316',
+  'C': '#eab308',
+  'D': '#84cc16',
+  'E': '#22c55e',
+  'F': '#3b82f6',
+};
+
+const DIFFICULTY_LABELS: Record<DifficultyGrade, string> = {
+  'A': '최상',
+  'B': '상',
+  'C': '중',
+  'D': '중하',
+  'E': '하',
+  'F': '기초',
+};
 
 export default function TeacherInputPage() {
   const navigate = useNavigate();
@@ -16,6 +35,8 @@ export default function TeacherInputPage() {
     addReport,
     currentYearMonth,
     setCurrentYearMonth,
+    exams,
+    setExams,
   } = useReportStore();
 
   const [loading, setLoading] = useState(true);
@@ -32,8 +53,12 @@ export default function TeacherInputPage() {
     }
 
     const loadData = async () => {
-      const studentsData = await fetchStudents();
+      const [studentsData, examsData] = await Promise.all([
+        fetchStudents(),
+        fetchExams(),
+      ]);
       setStudents(studentsData);
+      setExams(examsData);
 
       // 현재 선생님 과목을 수강하는 학생들 필터링하고 기존 점수 로드
       const mySubject = currentUser.teacher.subject;
@@ -58,10 +83,15 @@ export default function TeacherInputPage() {
     };
 
     loadData();
-  }, [currentUser, navigate, setStudents, reports, currentYearMonth]);
+  }, [currentUser, navigate, setStudents, setExams, reports, currentYearMonth]);
 
   const mySubject = currentUser?.teacher.subject || '';
   const myStudents = students.filter((s) => s.subjects.includes(mySubject));
+
+  // 현재 월의 내 과목 시험 정보
+  const currentExam = exams.find(
+    (e) => e.subject === mySubject && e.yearMonth === currentYearMonth
+  );
 
   const handleScoreChange = (studentId: string, score: number) => {
     setStudentScores((prev) => {
@@ -194,9 +224,36 @@ export default function TeacherInputPage() {
       <main style={{ maxWidth: '1200px', margin: '0 auto', padding: '24px' }}>
         <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
           <div style={{ padding: '20px 24px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ fontSize: '18px', fontWeight: '600' }}>
-              {currentYearMonth} {mySubject} 점수 입력
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: '600' }}>
+                {currentYearMonth} {mySubject} 점수 입력
+              </h2>
+              {currentExam && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      padding: '4px 12px',
+                      borderRadius: '9999px',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      color: '#ffffff',
+                      backgroundColor: DIFFICULTY_COLORS[currentExam.difficulty],
+                    }}
+                  >
+                    난이도 {currentExam.difficulty}
+                  </span>
+                  <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                    ({DIFFICULTY_LABELS[currentExam.difficulty]})
+                  </span>
+                  {currentExam.scope && (
+                    <span style={{ fontSize: '13px', color: '#9ca3af' }}>
+                      | 범위: {currentExam.scope}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               {savedMessage && (
                 <span style={{ color: savedMessage.includes('오류') ? '#dc2626' : '#16a34a', fontSize: '14px' }}>

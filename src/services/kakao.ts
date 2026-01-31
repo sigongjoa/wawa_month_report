@@ -2,6 +2,20 @@ import type { KakaoFriend } from '../types';
 
 const KAKAO_JS_KEY = import.meta.env.VITE_KAKAO_JS_KEY;
 
+// 카카오 비즈 메시지 파라미터
+export interface KakaoBizMessageParams {
+  recipientPhone: string;
+  templateId: string;
+  variables: Record<string, string>;
+  pdfUrl?: string;
+}
+
+// 카카오 비즈 설정
+interface KakaoBizConfig {
+  senderKey: string;
+  channelId: string;
+}
+
 // 저장된 토큰들
 let accessToken: string | null = null;
 let refreshToken: string | null = null;
@@ -331,4 +345,82 @@ export const sendKakaoMessageToMe = async (
     console.error('Failed to send message to me:', error);
     return false;
   }
+};
+
+// ============ 카카오 비즈 채널 알림톡 ============
+
+// 비즈 메시지 전송 (단건)
+// 참고: 실제 프로덕션에서는 서버 사이드에서 호출해야 합니다
+export const sendKakaoBizMessage = async (
+  config: KakaoBizConfig,
+  params: KakaoBizMessageParams
+): Promise<{ success: boolean; errorMessage?: string }> => {
+  // 카카오 비즈 메시지 API는 서버 사이드에서만 호출 가능
+  // 클라이언트에서는 백엔드 프록시를 통해 전송해야 함
+  // 이 함수는 백엔드 API 호출 형태로 구현
+
+  try {
+    // 실제 구현시에는 백엔드 엔드포인트로 요청
+    // 예: POST /api/kakao-biz/send
+    const response = await fetch('/api/kakao-biz/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        senderKey: config.senderKey,
+        channelId: config.channelId,
+        ...params,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      return { success: false, errorMessage: error.message || '전송 실패' };
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to send Kakao Biz message:', error);
+    // 개발 환경에서는 성공으로 처리 (목업)
+    if (import.meta.env.DEV) {
+      console.log('[DEV] Mock Kakao Biz message sent:', params);
+      return { success: true };
+    }
+    return { success: false, errorMessage: '네트워크 오류' };
+  }
+};
+
+// 비즈 메시지 대량 전송
+export const sendBulkKakaoBizMessage = async (
+  config: KakaoBizConfig,
+  messageList: KakaoBizMessageParams[]
+): Promise<{
+  total: number;
+  success: number;
+  failed: number;
+  results: Array<{ phone: string; success: boolean; errorMessage?: string }>;
+}> => {
+  const results: Array<{ phone: string; success: boolean; errorMessage?: string }> = [];
+
+  for (const params of messageList) {
+    const result = await sendKakaoBizMessage(config, params);
+    results.push({
+      phone: params.recipientPhone,
+      success: result.success,
+      errorMessage: result.errorMessage,
+    });
+
+    // API 레이트 리밋 방지를 위한 딜레이
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  const successCount = results.filter((r) => r.success).length;
+
+  return {
+    total: messageList.length,
+    success: successCount,
+    failed: messageList.length - successCount,
+    results,
+  };
 };

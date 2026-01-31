@@ -1,3 +1,18 @@
+// 시험 난이도 등급
+export type DifficultyGrade = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+
+// 시험지
+export interface Exam {
+  id: string;
+  subject: string;
+  yearMonth: string;
+  difficulty: DifficultyGrade;
+  examFileUrl?: string;
+  scope?: string;           // 범위
+  uploadedBy: string;
+  uploadedAt: string;
+}
+
 // 선생님
 export interface Teacher {
   id: string;
@@ -15,6 +30,9 @@ export interface Student {
   subjects: string[]; // 수강 과목들
   parentName?: string; // 학부모 이름 (카카오톡 전송용)
   parentKakaoId?: string; // 학부모 카카오 UUID (비즈앱 연동 후 사용)
+  examDate?: string; // 시험 예정일 (YYYY-MM-DD)
+  status?: 'active' | 'inactive'; // 재원 상태
+  absenceReason?: string; // 결시 사유
 }
 
 // 과목별 점수
@@ -25,6 +43,7 @@ export interface SubjectScore {
   teacherName: string;
   comment?: string;
   updatedAt: string;
+  difficulty?: DifficultyGrade;  // 시험 난이도
 }
 
 // 월별 리포트
@@ -62,10 +81,23 @@ export interface KakaoFriend {
 
 // 앱 설정
 export interface AppSettings {
-  notionDbId: string;
-  notionApiKey: string;
-  kakaoJsKey: string;
-  academyName: string;
+  // Notion 연동 설정
+  notionApiKey?: string;
+  notionTeachersDb?: string;
+  notionStudentsDb?: string;
+  notionScoresDb?: string;
+  notionExamsDb?: string;
+  // 레거시 (호환성)
+  notionDbId?: string;
+  // 카카오 설정
+  kakaoJsKey?: string;
+  // 학원 정보
+  academyName?: string;
+  academyLogo?: string;              // Base64 이미지
+  // 카카오 비즈
+  kakaoBizChannelId?: string;
+  kakaoBizSenderKey?: string;
+  kakaoBizTemplateId?: string;
 }
 
 // 현재 로그인한 선생님

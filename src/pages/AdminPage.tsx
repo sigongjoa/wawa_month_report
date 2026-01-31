@@ -1,8 +1,18 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useReportStore } from '../stores/reportStore';
-import { fetchStudents, fetchTeachers } from '../services/notion';
-import type { Student, MonthlyReport } from '../types';
+import { fetchStudents, fetchTeachers, updateScores } from '../services/notion';
+import type { Student, MonthlyReport, SubjectScore, DifficultyGrade } from '../types';
+
+const DIFFICULTY_GRADES: DifficultyGrade[] = ['A', 'B', 'C', 'D', 'E', 'F'];
+const DIFFICULTY_COLORS: Record<DifficultyGrade, string> = {
+  A: '#dc2626',
+  B: '#ea580c',
+  C: '#ca8a04',
+  D: '#65a30d',
+  E: '#16a34a',
+  F: '#2563eb',
+};
 
 export default function AdminPage() {
   const navigate = useNavigate();
@@ -14,6 +24,7 @@ export default function AdminPage() {
     teachers,
     setTeachers,
     reports,
+    setReports,
     currentYearMonth,
     setCurrentYearMonth,
     setCurrentReport,
@@ -24,6 +35,11 @@ export default function AdminPage() {
   const [selectedStudents, setSelectedStudents] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ success: number; failed: number } | null>(null);
+
+  // 점수 수정 모달
+  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+  const [editScores, setEditScores] = useState<SubjectScore[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (!currentUser || !currentUser.teacher.isAdmin) {
@@ -113,7 +129,6 @@ export default function AdminPage() {
     let success = 0;
     let failed = 0;
 
-    // 목업: 실제로는 카카오 API 호출
     for (const studentId of selectedStudents) {
       const student = students.find((s) => s.id === studentId);
       const report = getStudentReport(studentId);
@@ -123,10 +138,8 @@ export default function AdminPage() {
         continue;
       }
 
-      // 목업 전송 (2초 대기)
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // 목업: 랜덤하게 성공/실패 (90% 성공)
       const isSuccess = Math.random() > 0.1;
 
       if (isSuccess) {
@@ -160,6 +173,76 @@ export default function AdminPage() {
     setSelectedStudents(new Set());
   };
 
+  // 점수 수정 모달 열기
+  const openEditModal = (student: Student) => {
+    const report = getStudentReport(student.id);
+    const scores: SubjectScore[] = student.subjects.map(subject => {
+      const existing = report?.scores.find(s => s.subject === subject);
+      return existing || {
+        subject,
+        score: 0,
+        teacherId: '',
+        teacherName: '',
+        comment: '',
+        difficulty: 'C' as DifficultyGrade,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+    setEditScores(scores);
+    setEditingStudent(student);
+  };
+
+  const handleScoreChange = (subject: string, field: keyof SubjectScore, value: any) => {
+    setEditScores(prev => prev.map(s =>
+      s.subject === subject ? { ...s, [field]: value } : s
+    ));
+  };
+
+  const handleSaveScores = async () => {
+    if (!editingStudent) return;
+
+    setIsSaving(true);
+    try {
+      const success = await updateScores(
+        editingStudent.id,
+        editingStudent.name,
+        currentYearMonth,
+        editScores
+      );
+
+      if (success) {
+        // 로컬 상태 업데이트
+        const existingReport = getStudentReport(editingStudent.id);
+        if (existingReport) {
+          const updatedReports = reports.map(r =>
+            r.id === existingReport.id
+              ? { ...r, scores: editScores, updatedAt: new Date().toISOString() }
+              : r
+          );
+          setReports(updatedReports);
+        } else {
+          // 새 리포트 생성
+          const newReport: MonthlyReport = {
+            id: `${editingStudent.id}-${currentYearMonth}`,
+            studentId: editingStudent.id,
+            studentName: editingStudent.name,
+            yearMonth: currentYearMonth,
+            scores: editScores,
+            status: 'draft',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          setReports([...reports, newReport]);
+        }
+        setEditingStudent(null);
+      } else {
+        alert('저장에 실패했습니다.');
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   if (!currentUser) return null;
 
   if (loading) {
@@ -184,7 +267,7 @@ export default function AdminPage() {
             <h1 style={{ fontSize: '20px', fontWeight: 'bold' }}>관리자 대시보드</h1>
             <p style={{ fontSize: '14px', opacity: 0.9 }}>{currentUser.teacher.name} 선생님</p>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
             <input
               type="month"
               value={currentYearMonth}
@@ -196,6 +279,30 @@ export default function AdminPage() {
               style={{ padding: '8px 16px', backgroundColor: 'rgba(255,255,255,0.2)', color: '#ffffff', borderRadius: '8px', border: 'none', cursor: 'pointer' }}
             >
               점수 입력
+            </button>
+            <button
+              onClick={() => navigate('/students')}
+              style={{ padding: '8px 16px', backgroundColor: 'rgba(255,255,255,0.2)', color: '#ffffff', borderRadius: '8px', border: 'none', cursor: 'pointer' }}
+            >
+              학생 관리
+            </button>
+            <button
+              onClick={() => navigate('/schedule')}
+              style={{ padding: '8px 16px', backgroundColor: 'rgba(255,255,255,0.2)', color: '#ffffff', borderRadius: '8px', border: 'none', cursor: 'pointer' }}
+            >
+              시험 일정
+            </button>
+            <button
+              onClick={() => navigate('/exams')}
+              style={{ padding: '8px 16px', backgroundColor: 'rgba(255,255,255,0.2)', color: '#ffffff', borderRadius: '8px', border: 'none', cursor: 'pointer' }}
+            >
+              시험지
+            </button>
+            <button
+              onClick={() => navigate('/settings')}
+              style={{ padding: '8px 16px', backgroundColor: 'rgba(255,255,255,0.2)', color: '#ffffff', borderRadius: '8px', border: 'none', cursor: 'pointer' }}
+            >
+              설정
             </button>
             <button
               onClick={handleLogout}
@@ -238,7 +345,7 @@ export default function AdminPage() {
                 카카오톡 일괄 전송 (목업)
               </h3>
               <p style={{ fontSize: '14px', color: '#a16207' }}>
-                선택한 학생의 리포트를 학부모에게 전송합니다. (비즈앱 연동 후 실제 전송 가능)
+                선택한 학생의 리포트를 학부모에게 전송합니다.
               </p>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -355,21 +462,37 @@ export default function AdminPage() {
                       </span>
                     </td>
                     <td style={{ padding: '16px 24px', textAlign: 'center' }}>
-                      <button
-                        onClick={() => handlePreview(student)}
-                        disabled={!report || report.scores.length === 0}
-                        style={{
-                          padding: '6px 12px',
-                          fontSize: '13px',
-                          backgroundColor: report && report.scores.length > 0 ? '#eff6ff' : '#f3f4f6',
-                          color: report && report.scores.length > 0 ? '#2563eb' : '#9ca3af',
-                          borderRadius: '6px',
-                          border: 'none',
-                          cursor: report && report.scores.length > 0 ? 'pointer' : 'not-allowed',
-                        }}
-                      >
-                        미리보기
-                      </button>
+                      <div style={{ display: 'flex', justifyContent: 'center', gap: '8px' }}>
+                        <button
+                          onClick={() => openEditModal(student)}
+                          style={{
+                            padding: '6px 12px',
+                            fontSize: '13px',
+                            backgroundColor: '#fef3c7',
+                            color: '#92400e',
+                            borderRadius: '6px',
+                            border: 'none',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          수정
+                        </button>
+                        <button
+                          onClick={() => handlePreview(student)}
+                          disabled={!report || report.scores.length === 0}
+                          style={{
+                            padding: '6px 12px',
+                            fontSize: '13px',
+                            backgroundColor: report && report.scores.length > 0 ? '#eff6ff' : '#f3f4f6',
+                            color: report && report.scores.length > 0 ? '#2563eb' : '#9ca3af',
+                            borderRadius: '6px',
+                            border: 'none',
+                            cursor: report && report.scores.length > 0 ? 'pointer' : 'not-allowed',
+                          }}
+                        >
+                          미리보기
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -378,6 +501,139 @@ export default function AdminPage() {
           </table>
         </div>
       </div>
+
+      {/* 점수 수정 모달 */}
+      {editingStudent && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 50,
+          }}
+          onClick={() => setEditingStudent(null)}
+        >
+          <div
+            style={{
+              backgroundColor: '#ffffff',
+              borderRadius: '16px',
+              padding: '24px',
+              width: '100%',
+              maxWidth: '600px',
+              maxHeight: '90vh',
+              overflow: 'auto',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px', color: '#1f2937' }}>
+              {editingStudent.name} ({editingStudent.grade}) 점수 수정
+            </h2>
+            <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px' }}>
+              {currentYearMonth} 월말평가
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {editScores.map((score) => (
+                <div
+                  key={score.subject}
+                  style={{
+                    backgroundColor: '#f9fafb',
+                    borderRadius: '12px',
+                    padding: '16px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                    <span style={{ fontWeight: '600', color: '#374151', minWidth: '60px' }}>{score.subject}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={score.score}
+                      onChange={(e) => handleScoreChange(score.subject, 'score', parseInt(e.target.value) || 0)}
+                      style={{
+                        width: '80px',
+                        padding: '8px 12px',
+                        borderRadius: '8px',
+                        border: '1px solid #d1d5db',
+                        fontSize: '16px',
+                        fontWeight: '600',
+                        textAlign: 'center',
+                      }}
+                    />
+                    <span style={{ color: '#6b7280' }}>점</span>
+                    <select
+                      value={score.difficulty || 'C'}
+                      onChange={(e) => handleScoreChange(score.subject, 'difficulty', e.target.value as DifficultyGrade)}
+                      style={{
+                        padding: '8px 12px',
+                        borderRadius: '8px',
+                        border: '1px solid #d1d5db',
+                        backgroundColor: DIFFICULTY_COLORS[score.difficulty || 'C'] + '20',
+                        color: DIFFICULTY_COLORS[score.difficulty || 'C'],
+                        fontWeight: '600',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {DIFFICULTY_GRADES.map((d) => (
+                        <option key={d} value={d}>{d}등급</option>
+                      ))}
+                    </select>
+                  </div>
+                  <input
+                    type="text"
+                    value={score.comment || ''}
+                    onChange={(e) => handleScoreChange(score.subject, 'comment', e.target.value)}
+                    placeholder="코멘트 입력 (선택)"
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      border: '1px solid #d1d5db',
+                      fontSize: '14px',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+
+            {/* 버튼 */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
+              <button
+                onClick={() => setEditingStudent(null)}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#f3f4f6',
+                  color: '#374151',
+                  borderRadius: '8px',
+                  border: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                취소
+              </button>
+              <button
+                onClick={handleSaveScores}
+                disabled={isSaving}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: isSaving ? '#9ca3af' : '#2563eb',
+                  color: '#ffffff',
+                  borderRadius: '8px',
+                  border: 'none',
+                  cursor: isSaving ? 'not-allowed' : 'pointer',
+                  fontWeight: '500',
+                }}
+              >
+                {isSaving ? '저장 중...' : '저장'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
