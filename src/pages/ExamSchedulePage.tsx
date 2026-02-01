@@ -3,12 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { useReportStore } from '../stores/reportStore';
 import {
   fetchStudents,
-  updateStudent,
-  updateStudentExamDates,
   fetchAbsenceHistories,
   createAbsenceHistory,
   updateAbsenceHistory as updateAbsenceHistoryApi,
   fetchStudentAbsenceHistories,
+  fetchExamSchedules,
+  upsertExamSchedule,
+  bulkUpsertExamSchedules,
 } from '../services/notion';
 import type { Student, AbsenceHistory, ExamStatus } from '../types';
 
@@ -38,6 +39,9 @@ export default function ExamSchedulePage() {
     setAbsenceHistories,
     addAbsenceHistory,
     updateAbsenceHistory: updateAbsenceHistoryStore,
+    examSchedules,
+    setExamSchedules,
+    upsertExamSchedule: upsertExamScheduleStore,
   } = useReportStore();
 
   const [activeTab, setActiveTab] = useState<TabType>('today');
@@ -68,16 +72,26 @@ export default function ExamSchedulePage() {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [studentsData, historiesData] = await Promise.all([
+      const [studentsData, historiesData, schedulesData] = await Promise.all([
         fetchStudents(),
         fetchAbsenceHistories(currentYearMonth),
+        fetchExamSchedules(currentYearMonth),
       ]);
       setStudents(studentsData);
       setAbsenceHistories(historiesData);
+      setExamSchedules(schedulesData);
     } finally {
       setIsLoading(false);
     }
   };
+
+  // 학생의 현재 월 시험일 가져오기
+  const getStudentExamDate = useCallback((studentId: string): string | undefined => {
+    const schedule = examSchedules.find(
+      s => s.studentId === studentId && s.yearMonth === currentYearMonth
+    );
+    return schedule?.examDate;
+  }, [examSchedules, currentYearMonth]);
 
   // 학생의 시험 상태 판단 (점수 입력 여부 기반)
   const getStudentExamStatus = useCallback((student: Student): ExamStatus => {
@@ -105,22 +119,25 @@ export default function ExamSchedulePage() {
       }
     }
 
+    // 월별 시험 일정에서 시험일 가져오기
+    const examDate = getStudentExamDate(student.id);
+
     // 시험일 기준 판단
-    if (!student.examDate) {
+    if (!examDate) {
       return 'unscheduled';
     }
 
-    if (student.examDate === today) {
+    if (examDate === today) {
       return 'today';
     }
 
-    if (student.examDate > today) {
+    if (examDate > today) {
       return 'upcoming';
     }
 
     // 시험일이 지났는데 점수가 없으면 결시
     return 'absent';
-  }, [reports, currentYearMonth, absenceHistories, today]);
+  }, [reports, currentYearMonth, absenceHistories, today, getStudentExamDate]);
 
   // 필터링된 학생 목록
   const { todayStudents, absentStudents, upcomingStudents } = useMemo(() => {
@@ -132,12 +149,13 @@ export default function ExamSchedulePage() {
       if (student.status === 'inactive') return;
 
       const status = getStudentExamStatus(student);
+      const examDate = getStudentExamDate(student.id);
 
       switch (status) {
         case 'today':
         case 'completed':
           // 오늘 시험인 학생 (완료 포함)
-          if (student.examDate === today ||
+          if (examDate === today ||
               absenceHistories.some(h => h.studentId === student.id && h.retestDate === today)) {
             todayList.push(student);
           }
@@ -154,7 +172,7 @@ export default function ExamSchedulePage() {
     });
 
     return { todayStudents: todayList, absentStudents: absentList, upcomingStudents: upcomingList };
-  }, [students, getStudentExamStatus, today, absenceHistories]);
+  }, [students, getStudentExamStatus, getStudentExamDate, today, absenceHistories]);
 
   if (!currentUser?.teacher.isAdmin) {
     return (
@@ -212,7 +230,7 @@ export default function ExamSchedulePage() {
     setIsLoading(true);
     try {
       const reason = absenceReason === '기타' ? customReason : absenceReason;
-      const originalDate = absenceModal.examDate || today;
+      const originalDate = getStudentExamDate(absenceModal.id) || today;
 
       // 1. 결시 이력 생성
       const history = await createAbsenceHistory(
@@ -228,20 +246,20 @@ export default function ExamSchedulePage() {
         addAbsenceHistory(history);
       }
 
-      // 2. 학생 정보 업데이트 (재시험일 지정)
-      const success = await updateStudent(absenceModal.id, {
-        examDate: newExamDate || undefined,
-        absenceReason: reason || undefined,
-      });
-
-      if (success) {
-        setStudents(students.map(s =>
-          s.id === absenceModal.id
-            ? { ...s, examDate: newExamDate || undefined, absenceReason: reason || undefined }
-            : s
-        ));
-        setAbsenceModal(null);
+      // 2. 시험 일정 업데이트 (재시험일 지정)
+      if (newExamDate) {
+        const schedule = await upsertExamSchedule(
+          absenceModal.id,
+          absenceModal.name,
+          currentYearMonth,
+          newExamDate
+        );
+        if (schedule) {
+          upsertExamScheduleStore(schedule);
+        }
       }
+
+      setAbsenceModal(null);
     } finally {
       setIsLoading(false);
     }
@@ -255,11 +273,22 @@ export default function ExamSchedulePage() {
 
     setIsLoading(true);
     try {
-      const success = await updateStudentExamDates(Array.from(selectedStudents), bulkDate);
+      const selectedStudentList = students
+        .filter(s => selectedStudents.has(s.id))
+        .map(s => ({ id: s.id, name: s.name }));
+
+      const success = await bulkUpsertExamSchedules(selectedStudentList, currentYearMonth, bulkDate);
       if (success) {
-        setStudents(students.map(s =>
-          selectedStudents.has(s.id) ? { ...s, examDate: bulkDate } : s
-        ));
+        // 로컬 상태 업데이트
+        selectedStudentList.forEach(student => {
+          upsertExamScheduleStore({
+            id: `local-${student.id}-${currentYearMonth}`,
+            studentId: student.id,
+            studentName: student.name,
+            yearMonth: currentYearMonth,
+            examDate: bulkDate,
+          });
+        });
         setSelectedStudents(new Set());
         setBulkDateModal(false);
         setBulkDate('');
@@ -270,13 +299,14 @@ export default function ExamSchedulePage() {
   };
 
   const handleQuickDateSet = async (studentId: string, date: string) => {
+    const student = students.find(s => s.id === studentId);
+    if (!student) return;
+
     setIsLoading(true);
     try {
-      const success = await updateStudent(studentId, { examDate: date });
-      if (success) {
-        setStudents(students.map(s =>
-          s.id === studentId ? { ...s, examDate: date } : s
-        ));
+      const schedule = await upsertExamSchedule(studentId, student.name, currentYearMonth, date);
+      if (schedule) {
+        upsertExamScheduleStore(schedule);
       }
     } finally {
       setIsLoading(false);
@@ -410,21 +440,26 @@ export default function ExamSchedulePage() {
                   </span>
                 </td>
                 <td style={{ padding: '14px 16px', color: '#6b7280' }}>
-                  {absenceRecord?.retestDate ? (
-                    <span>
-                      <span style={{ textDecoration: 'line-through', color: '#9ca3af' }}>
-                        {absenceRecord.originalDate}
-                      </span>
-                      {' → '}
-                      <span style={{ color: '#2563eb', fontWeight: '500' }}>
-                        {absenceRecord.retestDate}
-                      </span>
-                    </span>
-                  ) : student.examDate ? (
-                    student.examDate
-                  ) : (
-                    <span style={{ color: '#dc2626' }}>미지정</span>
-                  )}
+                  {(() => {
+                    const examDate = getStudentExamDate(student.id);
+                    if (absenceRecord?.retestDate) {
+                      return (
+                        <span>
+                          <span style={{ textDecoration: 'line-through', color: '#9ca3af' }}>
+                            {absenceRecord.originalDate}
+                          </span>
+                          {' → '}
+                          <span style={{ color: '#2563eb', fontWeight: '500' }}>
+                            {absenceRecord.retestDate}
+                          </span>
+                        </span>
+                      );
+                    }
+                    if (examDate) {
+                      return examDate;
+                    }
+                    return <span style={{ color: '#dc2626' }}>미지정</span>;
+                  })()}
                 </td>
                 {showAbsence && (
                   <td style={{ padding: '14px 16px', color: '#6b7280' }}>
@@ -575,6 +610,27 @@ export default function ExamSchedulePage() {
             <p style={{ fontSize: '14px', color: '#6b7280' }}>오늘: {today} | {currentYearMonth} 월말평가</p>
           </div>
           <div style={{ display: 'flex', gap: '12px' }}>
+            <button
+              onClick={() => {
+                // 활성 학생 전체 선택
+                const activeStudentIds = students
+                  .filter(s => s.status !== 'inactive')
+                  .map(s => s.id);
+                setSelectedStudents(new Set(activeStudentIds));
+                setBulkDateModal(true);
+              }}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#FF6B00',
+                color: '#ffffff',
+                borderRadius: '8px',
+                border: 'none',
+                cursor: 'pointer',
+                fontWeight: '500',
+              }}
+            >
+              전체 일괄 날짜 지정
+            </button>
             <button
               onClick={loadData}
               disabled={isLoading}

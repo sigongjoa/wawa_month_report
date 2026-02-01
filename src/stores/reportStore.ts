@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Teacher, Student, MonthlyReport, SendHistory, CurrentUser, Exam, AppSettings, AbsenceHistory } from '../types';
+import type { Teacher, Student, MonthlyReport, SendHistory, CurrentUser, Exam, AppSettings, AbsenceHistory, ExamSchedule } from '../types';
 
 interface ReportState {
   // 로그인
@@ -48,6 +48,11 @@ interface ReportState {
   setAbsenceHistories: (histories: AbsenceHistory[]) => void;
   addAbsenceHistory: (history: AbsenceHistory) => void;
   updateAbsenceHistory: (history: AbsenceHistory) => void;
+
+  // 월별 시험 일정
+  examSchedules: ExamSchedule[];
+  setExamSchedules: (schedules: ExamSchedule[]) => void;
+  upsertExamSchedule: (schedule: ExamSchedule) => void;
 
   // 초기화
   reset: () => void;
@@ -140,6 +145,27 @@ export const useReportStore = create<ReportState>()(
         ),
       })),
 
+      // 월별 시험 일정
+      examSchedules: [],
+      setExamSchedules: (schedules) => set({ examSchedules: schedules }),
+      upsertExamSchedule: (schedule) => set((state) => {
+        const existing = state.examSchedules.find(
+          s => s.studentId === schedule.studentId && s.yearMonth === schedule.yearMonth
+        );
+        if (existing) {
+          return {
+            examSchedules: state.examSchedules.map(s =>
+              s.studentId === schedule.studentId && s.yearMonth === schedule.yearMonth
+                ? schedule
+                : s
+            ),
+          };
+        }
+        return {
+          examSchedules: [...state.examSchedules, schedule],
+        };
+      }),
+
       // 초기화
       reset: () => set({
         currentUser: null,
@@ -152,6 +178,7 @@ export const useReportStore = create<ReportState>()(
         exams: [],
         appSettings: defaultAppSettings,
         absenceHistories: [],
+        examSchedules: [],
       }),
     }),
     {
@@ -166,6 +193,7 @@ export const useReportStore = create<ReportState>()(
         exams: state.exams,
         appSettings: state.appSettings,
         absenceHistories: state.absenceHistories,
+        examSchedules: state.examSchedules,
       }),
     }
   )

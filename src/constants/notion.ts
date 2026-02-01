@@ -61,6 +61,14 @@ export const NOTION_COLUMNS_ABSENCE_HISTORY = {
   YEAR_MONTH: '년월',
 } as const;
 
+/** Exam Schedule database columns (월별 시험 일정) */
+export const NOTION_COLUMNS_EXAM_SCHEDULE = {
+  NAME: '이름',           // title
+  STUDENT: '학생',        // rich_text (학생 이름 또는 ID)
+  YEAR_MONTH: '년월',     // date (YYYY-MM-01 형식으로 저장)
+  EXAM_DATE: '시험일',    // date
+} as const;
+
 /** Status values */
 export const NOTION_STATUS_VALUES = {
   ACTIVE: '활성',

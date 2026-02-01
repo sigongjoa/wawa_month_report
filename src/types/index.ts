@@ -122,6 +122,8 @@ export interface AppSettings {
   cloudinaryApiSecret?: string;
   // 결시 이력 DB
   notionAbsenceHistoryDb?: string;
+  // 시험 일정 DB (월별 관리)
+  notionExamScheduleDb?: string;
 }
 
 // Cloudinary 업로드 결과
@@ -175,3 +177,14 @@ export type ExamStatus =
   | 'retest_pending' // 재시험 대기 중
   | 'upcoming'       // 시험 예정
   | 'unscheduled';   // 미지정
+
+// 월별 시험 일정 (ExamSchedule DB)
+export interface ExamSchedule {
+  id: string;
+  studentId: string;        // relation to Student
+  studentName?: string;     // 조회 편의용
+  yearMonth: string;        // "2026-02"
+  examDate: string;         // 시험일 (YYYY-MM-DD)
+  createdAt?: string;
+  updatedAt?: string;
+}

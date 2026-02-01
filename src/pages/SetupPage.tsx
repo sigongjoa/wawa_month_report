@@ -17,6 +17,9 @@ export default function SetupPage() {
   const [notionTeachersDb, setNotionTeachersDb] = useState(appSettings.notionTeachersDb || '');
   const [notionStudentsDb, setNotionStudentsDb] = useState(appSettings.notionStudentsDb || '');
   const [notionScoresDb, setNotionScoresDb] = useState(appSettings.notionScoresDb || '');
+  const [notionExamsDb, setNotionExamsDb] = useState(appSettings.notionExamsDb || '');
+  const [notionAbsenceHistoryDb, setNotionAbsenceHistoryDb] = useState(appSettings.notionAbsenceHistoryDb || '');
+  const [notionExamScheduleDb, setNotionExamScheduleDb] = useState(appSettings.notionExamScheduleDb || '');
 
   // JSON 파일 업로드 처리 (Notion 설정 정보)
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -41,6 +44,15 @@ export default function SetupPage() {
         if (data.notionScoresDb || data.scoresDb) {
           setNotionScoresDb(data.notionScoresDb || data.scoresDb);
         }
+        if (data.notionExamsDb || data.examsDb) {
+          setNotionExamsDb(data.notionExamsDb || data.examsDb);
+        }
+        if (data.notionAbsenceHistoryDb || data.absenceHistoryDb) {
+          setNotionAbsenceHistoryDb(data.notionAbsenceHistoryDb || data.absenceHistoryDb);
+        }
+        if (data.notionExamScheduleDb || data.examScheduleDb) {
+          setNotionExamScheduleDb(data.notionExamScheduleDb || data.examScheduleDb);
+        }
 
         setError('');
         setStatus('설정 파일 로드 완료! "연결 및 데이터 로드" 버튼을 눌러주세요.');
@@ -54,7 +66,7 @@ export default function SetupPage() {
   // Notion 연결 및 데이터 로드
   const handleNotionSetup = async () => {
     if (!notionApiKey || !notionTeachersDb || !notionStudentsDb || !notionScoresDb) {
-      setError('모든 필드를 입력해주세요.');
+      setError('필수 필드(API Key, 선생님/학생/성적 DB)를 입력해주세요.');
       return;
     }
 
@@ -63,12 +75,15 @@ export default function SetupPage() {
     setStatus('Notion 연결 테스트 중...');
 
     try {
-      // 설정 저장
+      // 설정 저장 (선택 항목 포함)
       setAppSettings({
         notionApiKey,
         notionTeachersDb,
         notionStudentsDb,
         notionScoresDb,
+        notionExamsDb: notionExamsDb || undefined,
+        notionAbsenceHistoryDb: notionAbsenceHistoryDb || undefined,
+        notionExamScheduleDb: notionExamScheduleDb || undefined,
       });
 
       // 연결 테스트
@@ -111,6 +126,9 @@ export default function SetupPage() {
       notionTeachersDb: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
       notionStudentsDb: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
       notionScoresDb: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      notionExamsDb: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (선택)",
+      notionAbsenceHistoryDb: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (선택)",
+      notionExamScheduleDb: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (선택, 월별 시험일정)",
     };
 
     const blob = new Blob([JSON.stringify(sample, null, 2)], { type: 'application/json' });
@@ -239,9 +257,9 @@ export default function SetupPage() {
               />
             </div>
 
-            <div style={{ marginBottom: '16px' }}>
+            <div style={{ marginBottom: '12px' }}>
               <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500' }}>
-                성적 DB ID
+                성적 DB ID *
               </label>
               <input
                 type="text"
@@ -250,6 +268,55 @@ export default function SetupPage() {
                 placeholder="2f973635-f415-800e-..."
                 style={inputStyle}
               />
+            </div>
+
+            {/* 선택 항목 구분선 */}
+            <div style={{ borderTop: '1px dashed #d1d5db', margin: '16px 0', paddingTop: '16px' }}>
+              <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '12px' }}>
+                선택 항목 (나중에 설정 페이지에서도 추가 가능)
+              </p>
+            </div>
+
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500', color: '#6b7280' }}>
+                시험지 DB ID (선택)
+              </label>
+              <input
+                type="text"
+                value={notionExamsDb}
+                onChange={(e) => setNotionExamsDb(e.target.value)}
+                placeholder="시험지 관리용 DB"
+                style={inputStyle}
+              />
+            </div>
+
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500', color: '#6b7280' }}>
+                결시 이력 DB ID (선택)
+              </label>
+              <input
+                type="text"
+                value={notionAbsenceHistoryDb}
+                onChange={(e) => setNotionAbsenceHistoryDb(e.target.value)}
+                placeholder="결시 이력 저장용 DB"
+                style={inputStyle}
+              />
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500', color: '#6b7280' }}>
+                시험 일정 DB ID (선택)
+              </label>
+              <input
+                type="text"
+                value={notionExamScheduleDb}
+                onChange={(e) => setNotionExamScheduleDb(e.target.value)}
+                placeholder="월별 시험 일정 관리용 DB"
+                style={inputStyle}
+              />
+              <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>
+                월별로 학생 시험일을 관리합니다. (학생ID, 년월, 시험일)
+              </p>
             </div>
 
             <button

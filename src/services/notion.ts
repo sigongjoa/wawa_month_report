@@ -1,6 +1,6 @@
-import type { Teacher, Student, Score, MonthlyReport, SubjectScore, Exam, DifficultyGrade, AbsenceHistory } from '../types';
+import type { Teacher, Student, Score, MonthlyReport, SubjectScore, Exam, DifficultyGrade, AbsenceHistory, ExamSchedule } from '../types';
 import { useReportStore } from '../stores/reportStore';
-import { NOTION_COLUMNS_STUDENT, NOTION_COLUMNS_ABSENCE_HISTORY } from '../constants';
+import { NOTION_COLUMNS_STUDENT, NOTION_COLUMNS_ABSENCE_HISTORY, NOTION_COLUMNS_EXAM_SCHEDULE } from '../constants';
 
 /** Chunk size for batch API operations to avoid rate limiting */
 const BATCH_CHUNK_SIZE = 10;
@@ -43,6 +43,7 @@ const getDbIds = () => {
     scores: settings.notionScoresDb || import.meta.env.VITE_NOTION_SCORES_DB || '',
     exams: settings.notionExamsDb || import.meta.env.VITE_NOTION_EXAMS_DB || '',
     absenceHistory: settings.notionAbsenceHistoryDb || import.meta.env.VITE_NOTION_ABSENCE_HISTORY_DB || '',
+    examSchedule: settings.notionExamScheduleDb || import.meta.env.VITE_NOTION_EXAM_SCHEDULE_DB || '',
   };
 };
 
@@ -101,15 +102,25 @@ interface ConnectionTestResult {
     students?: boolean;
     scores?: boolean;
     exams?: boolean;
+    absenceHistory?: boolean;
+    examSchedule?: boolean;
   };
 }
 
 export const testNotionConnection = async (
   apiKey: string,
-  dbIds: { teachers?: string; students?: string; scores?: string; exams?: string }
+  dbIds: {
+    teachers?: string;
+    students?: string;
+    scores?: string;
+    exams?: string;
+    absenceHistory?: string;
+    examSchedule?: string;
+  }
 ): Promise<ConnectionTestResult> => {
   const details: ConnectionTestResult['details'] = {};
   const errors: string[] = [];
+  let totalConfigured = 0;
 
   // API Key 테스트 (users/me 호출)
   try {
@@ -124,6 +135,7 @@ export const testNotionConnection = async (
   // 각 DB 연결 테스트
   const testDb = async (name: string, dbId?: string): Promise<boolean> => {
     if (!dbId) return false;
+    totalConfigured++;
     try {
       await notionFetch(`/databases/${dbId}`, { method: 'GET' }, apiKey);
       return true;
@@ -137,6 +149,8 @@ export const testNotionConnection = async (
   details.students = await testDb('학생', dbIds.students);
   details.scores = await testDb('점수', dbIds.scores);
   details.exams = await testDb('시험지', dbIds.exams);
+  details.absenceHistory = await testDb('결시이력', dbIds.absenceHistory);
+  details.examSchedule = await testDb('시험일정', dbIds.examSchedule);
 
   const connectedCount = Object.values(details).filter(Boolean).length;
 
@@ -144,7 +158,7 @@ export const testNotionConnection = async (
     return {
       success: connectedCount > 0,
       message: connectedCount > 0
-        ? `일부 연결 성공 (${connectedCount}/4). 실패: ${errors.join(', ')} - DB를 Integration에 연결했는지 확인하세요.`
+        ? `일부 연결 성공 (${connectedCount}/${totalConfigured}). 실패: ${errors.join(', ')} - DB를 Integration에 연결했는지 확인하세요.`
         : `연결 실패: ${errors.join(', ')} - DB를 Integration에 연결했는지 확인하세요.`,
       details,
     };
@@ -207,14 +221,20 @@ export const fetchStudents = async (): Promise<Student[]> => {
       }),
     });
 
-    return data.results.map((page: any) => ({
-      id: page.id,
-      name: page.properties['이름']?.title?.[0]?.plain_text || '',
-      grade: page.properties['학년']?.select?.name || page.properties['학년']?.rich_text?.[0]?.plain_text || '',
-      subjects: page.properties['수강과목']?.multi_select?.map((s: any) => s.name) || [],
-      parentName: page.properties['학부모연락처']?.rich_text?.[0]?.plain_text || page.properties['학부모']?.rich_text?.[0]?.plain_text || '',
-      parentPhone: page.properties['전화번호']?.phone_number || page.properties['학부모전화']?.rich_text?.[0]?.plain_text || '',
-    }));
+    return data.results.map((page: any) => {
+      const statusValue = page.properties[NOTION_COLUMNS_STUDENT.STATUS]?.select?.name;
+      return {
+        id: page.id,
+        name: page.properties['이름']?.title?.[0]?.plain_text || '',
+        grade: page.properties['학년']?.select?.name || page.properties['학년']?.rich_text?.[0]?.plain_text || '',
+        subjects: page.properties['수강과목']?.multi_select?.map((s: any) => s.name) || [],
+        parentName: page.properties['학부모연락처']?.rich_text?.[0]?.plain_text || page.properties['학부모']?.rich_text?.[0]?.plain_text || '',
+        parentPhone: page.properties['전화번호']?.phone_number || page.properties['학부모전화']?.rich_text?.[0]?.plain_text || '',
+        examDate: page.properties[NOTION_COLUMNS_STUDENT.EXAM_DATE]?.date?.start || undefined,
+        status: statusValue === '비활성' ? 'inactive' : 'active',
+        absenceReason: page.properties[NOTION_COLUMNS_STUDENT.ABSENCE_REASON]?.rich_text?.[0]?.plain_text || undefined,
+      };
+    });
   } catch (error) {
     console.error('Failed to fetch students:', error);
     return [];
@@ -886,6 +906,201 @@ export const fetchStudentAbsenceHistories = async (studentId: string): Promise<A
   } catch (error) {
     console.error('Failed to fetch student absence histories:', error);
     return [];
+  }
+};
+
+// ============ 월별 시험 일정 ============
+
+// 년월 문자열을 date 형식으로 변환 (2026-02 -> 2026-02-01)
+const yearMonthToDate = (yearMonth: string): string => {
+  return `${yearMonth}-01`;
+};
+
+// date 형식에서 년월 추출 (2026-02-01 -> 2026-02)
+const dateToYearMonth = (dateStr: string): string => {
+  return dateStr.substring(0, 7);
+};
+
+// 월별 시험 일정 조회
+export const fetchExamSchedules = async (yearMonth: string): Promise<ExamSchedule[]> => {
+  const dbIds = getDbIds();
+  if (!dbIds.examSchedule) {
+    console.warn('ExamSchedule DB ID not configured');
+    return [];
+  }
+
+  try {
+    // 년월을 date 형식으로 변환해서 필터링
+    const yearMonthDate = yearMonthToDate(yearMonth);
+
+    const data = await notionFetch(`/databases/${dbIds.examSchedule}/query`, {
+      method: 'POST',
+      body: JSON.stringify({
+        filter: {
+          property: NOTION_COLUMNS_EXAM_SCHEDULE.YEAR_MONTH,
+          date: { equals: yearMonthDate },
+        },
+      }),
+    });
+
+    return data.results.map((page: any) => {
+      const yearMonthRaw = page.properties[NOTION_COLUMNS_EXAM_SCHEDULE.YEAR_MONTH]?.date?.start || '';
+      return {
+        id: page.id,
+        studentId: page.properties[NOTION_COLUMNS_EXAM_SCHEDULE.STUDENT]?.rich_text?.[0]?.plain_text || '',
+        yearMonth: yearMonthRaw ? dateToYearMonth(yearMonthRaw) : '',
+        examDate: page.properties[NOTION_COLUMNS_EXAM_SCHEDULE.EXAM_DATE]?.date?.start || '',
+        createdAt: page.created_time,
+        updatedAt: page.last_edited_time,
+      };
+    });
+  } catch (error) {
+    console.error('Failed to fetch exam schedules:', error);
+    return [];
+  }
+};
+
+// 시험 일정 생성 또는 업데이트 (upsert)
+export const upsertExamSchedule = async (
+  studentId: string,
+  studentName: string,
+  yearMonth: string,
+  examDate: string
+): Promise<ExamSchedule | null> => {
+  const dbIds = getDbIds();
+  if (!dbIds.examSchedule) {
+    console.warn('ExamSchedule DB ID not configured');
+    // 목업 모드: 임시 데이터 반환
+    return {
+      id: `mock-${Date.now()}`,
+      studentId,
+      studentName,
+      yearMonth,
+      examDate,
+    };
+  }
+
+  try {
+    const yearMonthDate = yearMonthToDate(yearMonth);
+
+    // 기존 일정 찾기 (학생ID를 rich_text에서 검색)
+    const existing = await notionFetch(`/databases/${dbIds.examSchedule}/query`, {
+      method: 'POST',
+      body: JSON.stringify({
+        filter: {
+          and: [
+            { property: NOTION_COLUMNS_EXAM_SCHEDULE.STUDENT, rich_text: { equals: studentId } },
+            { property: NOTION_COLUMNS_EXAM_SCHEDULE.YEAR_MONTH, date: { equals: yearMonthDate } },
+          ],
+        },
+      }),
+    });
+
+    const properties: any = {
+      [NOTION_COLUMNS_EXAM_SCHEDULE.NAME]: {
+        title: [{ text: { content: `${studentName}_${yearMonth}` } }],
+      },
+      [NOTION_COLUMNS_EXAM_SCHEDULE.STUDENT]: {
+        rich_text: [{ text: { content: studentId } }],
+      },
+      [NOTION_COLUMNS_EXAM_SCHEDULE.YEAR_MONTH]: {
+        date: { start: yearMonthDate },
+      },
+      [NOTION_COLUMNS_EXAM_SCHEDULE.EXAM_DATE]: {
+        date: { start: examDate },
+      },
+    };
+
+    if (existing.results.length > 0) {
+      // 업데이트
+      const pageId = existing.results[0].id;
+      await notionFetch(`/pages/${pageId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ properties }),
+      });
+
+      return {
+        id: pageId,
+        studentId,
+        studentName,
+        yearMonth,
+        examDate,
+      };
+    } else {
+      // 새로 생성
+      const data = await notionFetch('/pages', {
+        method: 'POST',
+        body: JSON.stringify({
+          parent: { database_id: dbIds.examSchedule },
+          properties,
+        }),
+      });
+
+      return {
+        id: data.id,
+        studentId,
+        studentName,
+        yearMonth,
+        examDate,
+        createdAt: data.created_time,
+      };
+    }
+  } catch (error) {
+    console.error('Failed to upsert exam schedule:', error);
+    return null;
+  }
+};
+
+// 시험 일정 일괄 설정 (with chunking)
+export const bulkUpsertExamSchedules = async (
+  students: Array<{ id: string; name: string }>,
+  yearMonth: string,
+  examDate: string
+): Promise<boolean> => {
+  const dbIds = getDbIds();
+  if (!dbIds.examSchedule) {
+    console.warn('ExamSchedule DB ID not configured');
+    return true; // 목업 모드
+  }
+
+  try {
+    const chunks = chunkArray(students, BATCH_CHUNK_SIZE);
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      await Promise.all(
+        chunk.map(student => upsertExamSchedule(student.id, student.name, yearMonth, examDate))
+      );
+
+      // 청크 사이 딜레이
+      if (i < chunks.length - 1) {
+        await delay(BATCH_CHUNK_DELAY);
+      }
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Failed to bulk upsert exam schedules:', error);
+    return false;
+  }
+};
+
+// 시험 일정 삭제
+export const deleteExamSchedule = async (scheduleId: string): Promise<boolean> => {
+  const dbIds = getDbIds();
+  if (!dbIds.examSchedule) {
+    return true;
+  }
+
+  try {
+    await notionFetch(`/pages/${scheduleId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ archived: true }),
+    });
+    return true;
+  } catch (error) {
+    console.error('Failed to delete exam schedule:', error);
+    return false;
   }
 };
 

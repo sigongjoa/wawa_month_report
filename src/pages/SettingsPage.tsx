@@ -24,6 +24,7 @@ export default function SettingsPage() {
   const [notionScoresDb, setNotionScoresDb] = useState(appSettings.notionScoresDb || '');
   const [notionExamsDb, setNotionExamsDb] = useState(appSettings.notionExamsDb || '');
   const [notionAbsenceHistoryDb, setNotionAbsenceHistoryDb] = useState(appSettings.notionAbsenceHistoryDb || '');
+  const [notionExamScheduleDb, setNotionExamScheduleDb] = useState(appSettings.notionExamScheduleDb || '');
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [connectionMessage, setConnectionMessage] = useState('');
 
@@ -102,6 +103,8 @@ export default function SettingsPage() {
         students: notionStudentsDb,
         scores: notionScoresDb,
         exams: notionExamsDb,
+        absenceHistory: notionAbsenceHistoryDb,
+        examSchedule: notionExamScheduleDb,
       });
 
       if (result.success) {
@@ -162,6 +165,7 @@ export default function SettingsPage() {
       notionScoresDb: notionScoresDb || undefined,
       notionExamsDb: notionExamsDb || undefined,
       notionAbsenceHistoryDb: notionAbsenceHistoryDb || undefined,
+      notionExamScheduleDb: notionExamScheduleDb || undefined,
       // Cloudinary 설정
       cloudinaryCloudName: cloudinaryCloudName || undefined,
       cloudinaryApiKey: cloudinaryApiKey || undefined,
@@ -471,6 +475,21 @@ export default function SettingsPage() {
                   />
                   <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>
                     결시 이력을 저장할 DB입니다. (선택)
+                  </p>
+                </div>
+
+                {/* 시험 일정 DB */}
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={labelStyle}>시험 일정 DB ID</label>
+                  <input
+                    type="text"
+                    value={notionExamScheduleDb}
+                    onChange={(e) => setNotionExamScheduleDb(e.target.value)}
+                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    style={inputStyle}
+                  />
+                  <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>
+                    월별 시험 일정을 관리할 DB입니다. (선택, 학생ID-년월-시험일)
                   </p>
                 </div>
               </div>
