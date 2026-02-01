@@ -120,6 +120,8 @@ export interface AppSettings {
   cloudinaryCloudName?: string;
   cloudinaryApiKey?: string;
   cloudinaryApiSecret?: string;
+  // 결시 이력 DB
+  notionAbsenceHistoryDb?: string;
 }
 
 // Cloudinary 업로드 결과
@@ -151,3 +153,25 @@ export interface CurrentUser {
   teacher: Teacher;
   loginAt: string;
 }
+
+// 결시 이력
+export interface AbsenceHistory {
+  id: string;
+  studentId: string;        // relation to Student
+  studentName?: string;     // 조회 편의용
+  originalDate: string;     // 원래 시험일 (YYYY-MM-DD)
+  absenceReason: string;    // 결시 사유
+  retestDate?: string;      // 재시험일 (YYYY-MM-DD)
+  retestCompleted: boolean; // 재시험 완료 여부
+  yearMonth: string;        // 시험 년월 (2026-02)
+  createdAt: string;
+}
+
+// 시험 상태 (화면 표시용)
+export type ExamStatus =
+  | 'completed'      // 시험 완료 (점수 입력됨)
+  | 'today'          // 오늘 시험 예정
+  | 'absent'         // 결시 (재시험 미지정)
+  | 'retest_pending' // 재시험 대기 중
+  | 'upcoming'       // 시험 예정
+  | 'unscheduled';   // 미지정

@@ -1,16 +1,44 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useReportStore } from '../stores/reportStore';
-import { fetchStudents, updateStudent, updateStudentExamDates } from '../services/notion';
-import type { Student } from '../types';
+import {
+  fetchStudents,
+  updateStudent,
+  updateStudentExamDates,
+  fetchAbsenceHistories,
+  createAbsenceHistory,
+  updateAbsenceHistory as updateAbsenceHistoryApi,
+  fetchStudentAbsenceHistories,
+} from '../services/notion';
+import type { Student, AbsenceHistory, ExamStatus } from '../types';
 
-type TabType = 'today' | 'absent' | 'upcoming';
+type TabType = 'today' | 'absent' | 'upcoming' | 'history';
 
 const ABSENCE_REASONS = ['병결', '개인 사정', '학교 행사', '가족 행사', '기타'];
 
+// 시험 상태별 색상
+const STATUS_COLORS: Record<ExamStatus, { bg: string; text: string; label: string }> = {
+  completed: { bg: '#dcfce7', text: '#166534', label: '완료' },
+  today: { bg: '#fef9c3', text: '#854d0e', label: '오늘' },
+  absent: { bg: '#fee2e2', text: '#dc2626', label: '결시' },
+  retest_pending: { bg: '#dbeafe', text: '#1e40af', label: '재시험 대기' },
+  upcoming: { bg: '#f3f4f6', text: '#374151', label: '예정' },
+  unscheduled: { bg: '#fecaca', text: '#dc2626', label: '미지정' },
+};
+
 export default function ExamSchedulePage() {
   const navigate = useNavigate();
-  const { currentUser, students, setStudents } = useReportStore();
+  const {
+    currentUser,
+    students,
+    setStudents,
+    reports,
+    currentYearMonth,
+    absenceHistories,
+    setAbsenceHistories,
+    addAbsenceHistory,
+    updateAbsenceHistory: updateAbsenceHistoryStore,
+  } = useReportStore();
 
   const [activeTab, setActiveTab] = useState<TabType>('today');
   const [isLoading, setIsLoading] = useState(false);
@@ -26,21 +54,107 @@ export default function ExamSchedulePage() {
   const [bulkDateModal, setBulkDateModal] = useState(false);
   const [bulkDate, setBulkDate] = useState('');
 
+  // 결시 이력 조회 모달
+  const [historyModal, setHistoryModal] = useState<Student | null>(null);
+  const [studentHistories, setStudentHistories] = useState<AbsenceHistory[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
   const today = new Date().toISOString().split('T')[0];
 
   useEffect(() => {
-    loadStudents();
-  }, []);
+    loadData();
+  }, [currentYearMonth]);
 
-  const loadStudents = async () => {
+  const loadData = async () => {
     setIsLoading(true);
     try {
-      const data = await fetchStudents();
-      setStudents(data);
+      const [studentsData, historiesData] = await Promise.all([
+        fetchStudents(),
+        fetchAbsenceHistories(currentYearMonth),
+      ]);
+      setStudents(studentsData);
+      setAbsenceHistories(historiesData);
     } finally {
       setIsLoading(false);
     }
   };
+
+  // 학생의 시험 상태 판단 (점수 입력 여부 기반)
+  const getStudentExamStatus = useCallback((student: Student): ExamStatus => {
+    // 해당 월의 리포트 확인
+    const report = reports.find(
+      r => r.studentId === student.id && r.yearMonth === currentYearMonth
+    );
+
+    // 점수가 입력되어 있으면 완료
+    const hasScores = report && report.scores.length > 0;
+    if (hasScores) {
+      return 'completed';
+    }
+
+    // 결시 이력이 있고 재시험일이 지정된 경우
+    const absenceRecord = absenceHistories.find(
+      h => h.studentId === student.id && h.yearMonth === currentYearMonth && !h.retestCompleted
+    );
+    if (absenceRecord && absenceRecord.retestDate) {
+      if (absenceRecord.retestDate === today) {
+        return 'today';
+      }
+      if (absenceRecord.retestDate > today) {
+        return 'retest_pending';
+      }
+    }
+
+    // 시험일 기준 판단
+    if (!student.examDate) {
+      return 'unscheduled';
+    }
+
+    if (student.examDate === today) {
+      return 'today';
+    }
+
+    if (student.examDate > today) {
+      return 'upcoming';
+    }
+
+    // 시험일이 지났는데 점수가 없으면 결시
+    return 'absent';
+  }, [reports, currentYearMonth, absenceHistories, today]);
+
+  // 필터링된 학생 목록
+  const { todayStudents, absentStudents, upcomingStudents } = useMemo(() => {
+    const todayList: Student[] = [];
+    const absentList: Student[] = [];
+    const upcomingList: Student[] = [];
+
+    students.forEach(student => {
+      if (student.status === 'inactive') return;
+
+      const status = getStudentExamStatus(student);
+
+      switch (status) {
+        case 'today':
+        case 'completed':
+          // 오늘 시험인 학생 (완료 포함)
+          if (student.examDate === today ||
+              absenceHistories.some(h => h.studentId === student.id && h.retestDate === today)) {
+            todayList.push(student);
+          }
+          break;
+        case 'absent':
+        case 'unscheduled':
+        case 'retest_pending':
+          absentList.push(student);
+          break;
+        case 'upcoming':
+          upcomingList.push(student);
+          break;
+      }
+    });
+
+    return { todayStudents: todayList, absentStudents: absentList, upcomingStudents: upcomingList };
+  }, [students, getStudentExamStatus, today, absenceHistories]);
 
   if (!currentUser?.teacher.isAdmin) {
     return (
@@ -57,22 +171,6 @@ export default function ExamSchedulePage() {
       </div>
     );
   }
-
-  // 오늘 시험 학생
-  const todayStudents = students.filter(s => s.examDate === today && s.status !== 'inactive');
-
-  // 결시/미지정 학생 (시험일 없거나 지난 날짜)
-  const absentStudents = students.filter(s => {
-    if (s.status === 'inactive') return false;
-    if (!s.examDate) return true;
-    return s.examDate < today;
-  });
-
-  // 예정 학생 (미래 날짜)
-  const upcomingStudents = students.filter(s => {
-    if (s.status === 'inactive') return false;
-    return s.examDate && s.examDate > today;
-  });
 
   const handleSelectStudent = (studentId: string) => {
     setSelectedStudents(prev => {
@@ -114,6 +212,23 @@ export default function ExamSchedulePage() {
     setIsLoading(true);
     try {
       const reason = absenceReason === '기타' ? customReason : absenceReason;
+      const originalDate = absenceModal.examDate || today;
+
+      // 1. 결시 이력 생성
+      const history = await createAbsenceHistory(
+        absenceModal.id,
+        absenceModal.name,
+        originalDate,
+        reason,
+        currentYearMonth,
+        newExamDate || undefined
+      );
+
+      if (history) {
+        addAbsenceHistory(history);
+      }
+
+      // 2. 학생 정보 업데이트 (재시험일 지정)
       const success = await updateStudent(absenceModal.id, {
         examDate: newExamDate || undefined,
         absenceReason: reason || undefined,
@@ -168,6 +283,36 @@ export default function ExamSchedulePage() {
     }
   };
 
+  // 결시 이력 조회
+  const openHistoryModal = async (student: Student) => {
+    setHistoryModal(student);
+    setLoadingHistory(true);
+    try {
+      const histories = await fetchStudentAbsenceHistories(student.id);
+      setStudentHistories(histories);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  // 재시험 완료 처리
+  const handleMarkRetestComplete = async (historyId: string) => {
+    setLoadingHistory(true);
+    try {
+      const success = await updateAbsenceHistoryApi(historyId, { retestCompleted: true });
+      if (success) {
+        const updatedHistory = studentHistories.find(h => h.id === historyId);
+        if (updatedHistory) {
+          const updated = { ...updatedHistory, retestCompleted: true };
+          setStudentHistories(prev => prev.map(h => h.id === historyId ? updated : h));
+          updateAbsenceHistoryStore(updated);
+        }
+      }
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
   const tabStyle = (isActive: boolean) => ({
     padding: '12px 24px',
     backgroundColor: isActive ? '#ffffff' : 'transparent',
@@ -197,6 +342,7 @@ export default function ExamSchedulePage() {
           <th style={{ padding: '14px 16px', textAlign: 'left', fontWeight: '600', color: '#374151' }}>이름</th>
           <th style={{ padding: '14px 16px', textAlign: 'left', fontWeight: '600', color: '#374151' }}>학년</th>
           <th style={{ padding: '14px 16px', textAlign: 'left', fontWeight: '600', color: '#374151' }}>수강과목</th>
+          <th style={{ padding: '14px 16px', textAlign: 'center', fontWeight: '600', color: '#374151' }}>상태</th>
           <th style={{ padding: '14px 16px', textAlign: 'left', fontWeight: '600', color: '#374151' }}>시험일</th>
           {showAbsence && (
             <th style={{ padding: '14px 16px', textAlign: 'left', fontWeight: '600', color: '#374151' }}>결시사유</th>
@@ -207,107 +353,216 @@ export default function ExamSchedulePage() {
       <tbody>
         {studentList.length === 0 ? (
           <tr>
-            <td colSpan={showAbsence ? 7 : 6} style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
+            <td colSpan={showAbsence ? 8 : 7} style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
               해당하는 학생이 없습니다.
             </td>
           </tr>
         ) : (
-          studentList.map((student, idx) => (
-            <tr key={student.id} style={{ borderBottom: idx < studentList.length - 1 ? '1px solid #e5e7eb' : 'none' }}>
-              <td style={{ padding: '14px 16px', textAlign: 'center' }}>
-                <input
-                  type="checkbox"
-                  checked={selectedStudents.has(student.id)}
-                  onChange={() => handleSelectStudent(student.id)}
-                  style={{ width: '18px', height: '18px', cursor: 'pointer' }}
-                />
-              </td>
-              <td style={{ padding: '14px 16px', fontWeight: '500', color: '#1f2937' }}>{student.name}</td>
-              <td style={{ padding: '14px 16px', color: '#6b7280' }}>{student.grade}</td>
-              <td style={{ padding: '14px 16px' }}>
-                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                  {student.subjects.map(sub => (
-                    <span
-                      key={sub}
-                      style={{
-                        padding: '2px 8px',
-                        backgroundColor: '#e0e7ff',
-                        color: '#4338ca',
-                        borderRadius: '4px',
-                        fontSize: '12px',
-                      }}
-                    >
-                      {sub}
-                    </span>
-                  ))}
-                </div>
-              </td>
-              <td style={{ padding: '14px 16px', color: '#6b7280' }}>
-                {student.examDate || (
-                  <span style={{ color: '#dc2626' }}>미지정</span>
-                )}
-              </td>
-              {showAbsence && (
-                <td style={{ padding: '14px 16px', color: '#6b7280' }}>
-                  {student.absenceReason || '-'}
+          studentList.map((student, idx) => {
+            const status = getStudentExamStatus(student);
+            const statusStyle = STATUS_COLORS[status];
+            const absenceRecord = absenceHistories.find(
+              h => h.studentId === student.id && h.yearMonth === currentYearMonth
+            );
+
+            return (
+              <tr key={student.id} style={{ borderBottom: idx < studentList.length - 1 ? '1px solid #e5e7eb' : 'none' }}>
+                <td style={{ padding: '14px 16px', textAlign: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedStudents.has(student.id)}
+                    onChange={() => handleSelectStudent(student.id)}
+                    style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                  />
                 </td>
-              )}
-              <td style={{ padding: '14px 16px', textAlign: 'center' }}>
-                <div style={{ display: 'flex', justifyContent: 'center', gap: '8px' }}>
-                  {activeTab === 'today' ? (
+                <td style={{ padding: '14px 16px', fontWeight: '500', color: '#1f2937' }}>{student.name}</td>
+                <td style={{ padding: '14px 16px', color: '#6b7280' }}>{student.grade}</td>
+                <td style={{ padding: '14px 16px' }}>
+                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                    {student.subjects.map(sub => (
+                      <span
+                        key={sub}
+                        style={{
+                          padding: '2px 8px',
+                          backgroundColor: '#e0e7ff',
+                          color: '#4338ca',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                        }}
+                      >
+                        {sub}
+                      </span>
+                    ))}
+                  </div>
+                </td>
+                <td style={{ padding: '14px 16px', textAlign: 'center' }}>
+                  <span
+                    style={{
+                      padding: '4px 12px',
+                      backgroundColor: statusStyle.bg,
+                      color: statusStyle.text,
+                      borderRadius: '9999px',
+                      fontSize: '12px',
+                      fontWeight: '500',
+                    }}
+                  >
+                    {statusStyle.label}
+                  </span>
+                </td>
+                <td style={{ padding: '14px 16px', color: '#6b7280' }}>
+                  {absenceRecord?.retestDate ? (
+                    <span>
+                      <span style={{ textDecoration: 'line-through', color: '#9ca3af' }}>
+                        {absenceRecord.originalDate}
+                      </span>
+                      {' → '}
+                      <span style={{ color: '#2563eb', fontWeight: '500' }}>
+                        {absenceRecord.retestDate}
+                      </span>
+                    </span>
+                  ) : student.examDate ? (
+                    student.examDate
+                  ) : (
+                    <span style={{ color: '#dc2626' }}>미지정</span>
+                  )}
+                </td>
+                {showAbsence && (
+                  <td style={{ padding: '14px 16px', color: '#6b7280' }}>
+                    {absenceRecord?.absenceReason || student.absenceReason || '-'}
+                  </td>
+                )}
+                <td style={{ padding: '14px 16px', textAlign: 'center' }}>
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    {status === 'completed' ? (
+                      <span style={{ color: '#16a34a', fontSize: '13px', fontWeight: '500' }}>
+                        점수 입력됨
+                      </span>
+                    ) : status === 'today' ? (
+                      <button
+                        onClick={() => openAbsenceModal(student)}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: '#fee2e2',
+                          color: '#dc2626',
+                          borderRadius: '6px',
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontSize: '13px',
+                        }}
+                      >
+                        결시 처리
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => handleQuickDateSet(student.id, today)}
+                          style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#dcfce7',
+                            color: '#166534',
+                            borderRadius: '6px',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: '13px',
+                          }}
+                        >
+                          오늘로
+                        </button>
+                        <button
+                          onClick={() => openAbsenceModal(student)}
+                          style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#f3f4f6',
+                            color: '#374151',
+                            borderRadius: '6px',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: '13px',
+                          }}
+                        >
+                          날짜 변경
+                        </button>
+                      </>
+                    )}
                     <button
-                      onClick={() => openAbsenceModal(student)}
+                      onClick={() => openHistoryModal(student)}
                       style={{
                         padding: '6px 12px',
-                        backgroundColor: '#fee2e2',
-                        color: '#dc2626',
+                        backgroundColor: '#e0e7ff',
+                        color: '#4338ca',
                         borderRadius: '6px',
                         border: 'none',
                         cursor: 'pointer',
                         fontSize: '13px',
                       }}
                     >
-                      결시 처리
+                      이력
                     </button>
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => handleQuickDateSet(student.id, today)}
-                        style={{
-                          padding: '6px 12px',
-                          backgroundColor: '#dcfce7',
-                          color: '#166534',
-                          borderRadius: '6px',
-                          border: 'none',
-                          cursor: 'pointer',
-                          fontSize: '13px',
-                        }}
-                      >
-                        오늘로
-                      </button>
-                      <button
-                        onClick={() => openAbsenceModal(student)}
-                        style={{
-                          padding: '6px 12px',
-                          backgroundColor: '#f3f4f6',
-                          color: '#374151',
-                          borderRadius: '6px',
-                          border: 'none',
-                          cursor: 'pointer',
-                          fontSize: '13px',
-                        }}
-                      >
-                        날짜 변경
-                      </button>
-                    </>
-                  )}
-                </div>
-              </td>
-            </tr>
-          ))
+                  </div>
+                </td>
+              </tr>
+            );
+          })
         )}
       </tbody>
     </table>
+  );
+
+  // 전체 결시 이력 탭
+  const renderHistoryTab = () => (
+    <div style={{ padding: '20px' }}>
+      <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px', color: '#374151' }}>
+        {currentYearMonth} 결시 이력
+      </h3>
+      {absenceHistories.length === 0 ? (
+        <p style={{ textAlign: 'center', color: '#6b7280', padding: '40px' }}>
+          결시 이력이 없습니다.
+        </p>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+              <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: '600', color: '#374151' }}>학생</th>
+              <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: '600', color: '#374151' }}>원래 시험일</th>
+              <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: '600', color: '#374151' }}>결시 사유</th>
+              <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: '600', color: '#374151' }}>재시험일</th>
+              <th style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '600', color: '#374151' }}>상태</th>
+            </tr>
+          </thead>
+          <tbody>
+            {absenceHistories.map((history, idx) => {
+              const student = students.find(s => s.id === history.studentId);
+              return (
+                <tr key={history.id} style={{ borderBottom: idx < absenceHistories.length - 1 ? '1px solid #e5e7eb' : 'none' }}>
+                  <td style={{ padding: '12px 16px', fontWeight: '500', color: '#1f2937' }}>
+                    {student?.name || history.studentName || '알 수 없음'}
+                  </td>
+                  <td style={{ padding: '12px 16px', color: '#6b7280' }}>{history.originalDate}</td>
+                  <td style={{ padding: '12px 16px', color: '#6b7280' }}>{history.absenceReason}</td>
+                  <td style={{ padding: '12px 16px', color: history.retestDate ? '#2563eb' : '#9ca3af' }}>
+                    {history.retestDate || '미지정'}
+                  </td>
+                  <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                    <span
+                      style={{
+                        padding: '4px 12px',
+                        backgroundColor: history.retestCompleted ? '#dcfce7' : '#fef9c3',
+                        color: history.retestCompleted ? '#166534' : '#854d0e',
+                        borderRadius: '9999px',
+                        fontSize: '12px',
+                        fontWeight: '500',
+                      }}
+                    >
+                      {history.retestCompleted ? '재시험 완료' : '재시험 대기'}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 
   return (
@@ -317,21 +572,37 @@ export default function ExamSchedulePage() {
         <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={{ fontSize: '20px', fontWeight: 'bold', color: '#1f2937' }}>시험 일정 관리</h1>
-            <p style={{ fontSize: '14px', color: '#6b7280' }}>오늘: {today}</p>
+            <p style={{ fontSize: '14px', color: '#6b7280' }}>오늘: {today} | {currentYearMonth} 월말평가</p>
           </div>
-          <button
-            onClick={() => navigate('/admin')}
-            style={{ padding: '8px 16px', backgroundColor: '#f3f4f6', borderRadius: '8px', border: 'none', cursor: 'pointer' }}
-          >
-            돌아가기
-          </button>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button
+              onClick={loadData}
+              disabled={isLoading}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#e0e7ff',
+                color: '#4338ca',
+                borderRadius: '8px',
+                border: 'none',
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {isLoading ? '로딩...' : '새로고침'}
+            </button>
+            <button
+              onClick={() => navigate('/admin')}
+              style={{ padding: '8px 16px', backgroundColor: '#f3f4f6', borderRadius: '8px', border: 'none', cursor: 'pointer' }}
+            >
+              돌아가기
+            </button>
+          </div>
         </div>
       </header>
 
       {/* 메인 콘텐츠 */}
       <main style={{ maxWidth: '1200px', margin: '0 auto', padding: '24px' }}>
         {/* 통계 카드 */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
           <div
             onClick={() => setActiveTab('today')}
             style={{
@@ -357,7 +628,7 @@ export default function ExamSchedulePage() {
               border: activeTab === 'absent' ? '2px solid #dc2626' : '2px solid transparent',
             }}
           >
-            <p style={{ color: '#6b7280', fontSize: '14px' }}>결시/미지정</p>
+            <p style={{ color: '#6b7280', fontSize: '14px' }}>결시/미지정/재시험</p>
             <p style={{ fontSize: '28px', fontWeight: 'bold', color: '#dc2626' }}>{absentStudents.length}명</p>
           </div>
           <div
@@ -373,6 +644,20 @@ export default function ExamSchedulePage() {
           >
             <p style={{ color: '#6b7280', fontSize: '14px' }}>예정 학생</p>
             <p style={{ fontSize: '28px', fontWeight: 'bold', color: '#16a34a' }}>{upcomingStudents.length}명</p>
+          </div>
+          <div
+            onClick={() => setActiveTab('history')}
+            style={{
+              backgroundColor: activeTab === 'history' ? '#faf5ff' : '#ffffff',
+              padding: '20px',
+              borderRadius: '12px',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+              cursor: 'pointer',
+              border: activeTab === 'history' ? '2px solid #7c3aed' : '2px solid transparent',
+            }}
+          >
+            <p style={{ color: '#6b7280', fontSize: '14px' }}>결시 이력</p>
+            <p style={{ fontSize: '28px', fontWeight: 'bold', color: '#7c3aed' }}>{absenceHistories.length}건</p>
           </div>
         </div>
 
@@ -454,6 +739,18 @@ export default function ExamSchedulePage() {
               {upcomingStudents.length}
             </span>
           </button>
+          <button style={tabStyle(activeTab === 'history')} onClick={() => setActiveTab('history')}>
+            결시 이력
+            <span style={{
+              backgroundColor: '#7c3aed',
+              color: '#ffffff',
+              padding: '2px 8px',
+              borderRadius: '9999px',
+              fontSize: '12px',
+            }}>
+              {absenceHistories.length}
+            </span>
+          </button>
         </div>
 
         {/* 학생 목록 */}
@@ -461,6 +758,7 @@ export default function ExamSchedulePage() {
           {activeTab === 'today' && renderStudentList(todayStudents)}
           {activeTab === 'absent' && renderStudentList(absentStudents, true)}
           {activeTab === 'upcoming' && renderStudentList(upcomingStudents)}
+          {activeTab === 'history' && renderHistoryTab()}
         </div>
       </main>
 
@@ -492,13 +790,13 @@ export default function ExamSchedulePage() {
               {absenceModal.name} ({absenceModal.grade})
             </h2>
             <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px' }}>
-              {activeTab === 'today' ? '결시 처리' : '시험일 변경'}
+              {activeTab === 'today' ? '결시 처리 및 재시험일 지정' : '시험일 변경'}
             </p>
 
             {/* 새 시험일 */}
             <div style={{ marginBottom: '16px' }}>
               <label style={{ display: 'block', marginBottom: '6px', fontWeight: '500', color: '#374151', fontSize: '14px' }}>
-                새 시험일
+                {activeTab === 'today' ? '재시험일' : '새 시험일'}
               </label>
               <input
                 type="date"
@@ -673,6 +971,121 @@ export default function ExamSchedulePage() {
                 }}
               >
                 {isLoading ? '저장 중...' : '저장'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 결시 이력 조회 모달 */}
+      {historyModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 50,
+          }}
+          onClick={() => setHistoryModal(null)}
+        >
+          <div
+            style={{
+              backgroundColor: '#ffffff',
+              borderRadius: '16px',
+              padding: '24px',
+              width: '100%',
+              maxWidth: '500px',
+              maxHeight: '80vh',
+              overflow: 'auto',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px', color: '#1f2937' }}>
+              {historyModal.name}님의 결시 이력
+            </h2>
+            <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px' }}>
+              전체 결시 기록을 확인합니다.
+            </p>
+
+            {loadingHistory ? (
+              <p style={{ textAlign: 'center', color: '#6b7280', padding: '20px' }}>로딩 중...</p>
+            ) : studentHistories.length === 0 ? (
+              <p style={{ textAlign: 'center', color: '#6b7280', padding: '20px' }}>결시 이력이 없습니다.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {studentHistories.map(history => (
+                  <div
+                    key={history.id}
+                    style={{
+                      backgroundColor: '#f9fafb',
+                      borderRadius: '8px',
+                      padding: '12px 16px',
+                      border: '1px solid #e5e7eb',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <span style={{ fontWeight: '500', color: '#374151' }}>{history.yearMonth}</span>
+                      <span
+                        style={{
+                          padding: '2px 8px',
+                          backgroundColor: history.retestCompleted ? '#dcfce7' : '#fef9c3',
+                          color: history.retestCompleted ? '#166534' : '#854d0e',
+                          borderRadius: '9999px',
+                          fontSize: '11px',
+                          fontWeight: '500',
+                        }}
+                      >
+                        {history.retestCompleted ? '완료' : '대기'}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>
+                      원래 시험일: {history.originalDate}
+                    </p>
+                    <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>
+                      사유: {history.absenceReason}
+                    </p>
+                    <p style={{ fontSize: '13px', color: history.retestDate ? '#2563eb' : '#9ca3af' }}>
+                      재시험일: {history.retestDate || '미지정'}
+                    </p>
+                    {!history.retestCompleted && history.retestDate && (
+                      <button
+                        onClick={() => handleMarkRetestComplete(history.id)}
+                        disabled={loadingHistory}
+                        style={{
+                          marginTop: '8px',
+                          padding: '6px 12px',
+                          backgroundColor: '#dcfce7',
+                          color: '#166534',
+                          borderRadius: '6px',
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                        }}
+                      >
+                        재시험 완료 처리
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+              <button
+                onClick={() => setHistoryModal(null)}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#f3f4f6',
+                  color: '#374151',
+                  borderRadius: '8px',
+                  border: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                닫기
               </button>
             </div>
           </div>

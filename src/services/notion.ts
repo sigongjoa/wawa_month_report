@@ -1,5 +1,24 @@
-import type { Teacher, Student, Score, MonthlyReport, SubjectScore, Exam, DifficultyGrade } from '../types';
+import type { Teacher, Student, Score, MonthlyReport, SubjectScore, Exam, DifficultyGrade, AbsenceHistory } from '../types';
 import { useReportStore } from '../stores/reportStore';
+import { NOTION_COLUMNS_STUDENT, NOTION_COLUMNS_ABSENCE_HISTORY } from '../constants';
+
+/** Chunk size for batch API operations to avoid rate limiting */
+const BATCH_CHUNK_SIZE = 10;
+
+/** Delay between batch chunks in ms */
+const BATCH_CHUNK_DELAY = 100;
+
+/** Helper to chunk an array into smaller arrays */
+const chunkArray = <T>(array: T[], size: number): T[][] => {
+  const chunks: T[][] = [];
+  for (let i = 0; i < array.length; i += size) {
+    chunks.push(array.slice(i, i + size));
+  }
+  return chunks;
+};
+
+/** Helper to delay execution */
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Electron 환경 감지
 const isElectron = (): boolean => {
@@ -23,6 +42,7 @@ const getDbIds = () => {
     students: settings.notionStudentsDb || import.meta.env.VITE_NOTION_STUDENTS_DB || '',
     scores: settings.notionScoresDb || import.meta.env.VITE_NOTION_SCORES_DB || '',
     exams: settings.notionExamsDb || import.meta.env.VITE_NOTION_EXAMS_DB || '',
+    absenceHistory: settings.notionAbsenceHistoryDb || import.meta.env.VITE_NOTION_ABSENCE_HISTORY_DB || '',
   };
 };
 
@@ -322,7 +342,7 @@ export const deleteStudent = async (studentId: string): Promise<boolean> => {
   }
 };
 
-// 학생 시험일 일괄 업데이트
+// 학생 시험일 일괄 업데이트 (with chunking to avoid rate limits)
 export const updateStudentExamDates = async (
   studentIds: string[],
   examDate: string | null
@@ -334,18 +354,29 @@ export const updateStudentExamDates = async (
   }
 
   try {
-    await Promise.all(
-      studentIds.map(id =>
-        notionFetch(`/pages/${id}`, {
-          method: 'PATCH',
-          body: JSON.stringify({
-            properties: {
-              '시험일': examDate ? { date: { start: examDate } } : { date: null },
-            },
-          }),
-        })
-      )
-    );
+    const chunks = chunkArray(studentIds, BATCH_CHUNK_SIZE);
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      await Promise.all(
+        chunk.map(id =>
+          notionFetch(`/pages/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              properties: {
+                [NOTION_COLUMNS_STUDENT.EXAM_DATE]: examDate ? { date: { start: examDate } } : { date: null },
+              },
+            }),
+          })
+        )
+      );
+
+      // Add delay between chunks to avoid rate limiting
+      if (i < chunks.length - 1) {
+        await delay(BATCH_CHUNK_DELAY);
+      }
+    }
+
     return true;
   } catch (error) {
     console.error('Failed to update exam dates:', error);
@@ -660,6 +691,201 @@ export const updateExamDifficulty = async (examId: string, difficulty: Difficult
   } catch (error) {
     console.error('Failed to update exam difficulty:', error);
     return false;
+  }
+};
+
+// ============ 결시 이력 ============
+
+// 결시 이력 조회 (년월 기준)
+export const fetchAbsenceHistories = async (yearMonth?: string): Promise<AbsenceHistory[]> => {
+  const dbIds = getDbIds();
+  if (!dbIds.absenceHistory) {
+    console.warn('AbsenceHistory DB ID not configured');
+    return [];
+  }
+
+  try {
+    const filter = yearMonth
+      ? { property: NOTION_COLUMNS_ABSENCE_HISTORY.YEAR_MONTH, rich_text: { equals: yearMonth } }
+      : undefined;
+
+    const data = await notionFetch(`/databases/${dbIds.absenceHistory}/query`, {
+      method: 'POST',
+      body: JSON.stringify(filter ? { filter } : {}),
+    });
+
+    return data.results.map((page: any) => ({
+      id: page.id,
+      studentId: page.properties[NOTION_COLUMNS_ABSENCE_HISTORY.STUDENT]?.relation?.[0]?.id || '',
+      originalDate: page.properties[NOTION_COLUMNS_ABSENCE_HISTORY.ORIGINAL_DATE]?.date?.start || '',
+      absenceReason: page.properties[NOTION_COLUMNS_ABSENCE_HISTORY.ABSENCE_REASON]?.rich_text?.[0]?.plain_text || '',
+      retestDate: page.properties[NOTION_COLUMNS_ABSENCE_HISTORY.RETEST_DATE]?.date?.start || undefined,
+      retestCompleted: page.properties[NOTION_COLUMNS_ABSENCE_HISTORY.RETEST_COMPLETED]?.checkbox || false,
+      yearMonth: page.properties[NOTION_COLUMNS_ABSENCE_HISTORY.YEAR_MONTH]?.rich_text?.[0]?.plain_text || '',
+      createdAt: page.created_time,
+    }));
+  } catch (error) {
+    console.error('Failed to fetch absence histories:', error);
+    return [];
+  }
+};
+
+// 결시 이력 생성
+export const createAbsenceHistory = async (
+  studentId: string,
+  studentName: string,
+  originalDate: string,
+  absenceReason: string,
+  yearMonth: string,
+  retestDate?: string
+): Promise<AbsenceHistory | null> => {
+  const dbIds = getDbIds();
+  if (!dbIds.absenceHistory) {
+    console.warn('AbsenceHistory DB ID not configured');
+    // 목업 모드: 임시 데이터 반환
+    return {
+      id: `mock-${Date.now()}`,
+      studentId,
+      studentName,
+      originalDate,
+      absenceReason,
+      retestDate,
+      retestCompleted: false,
+      yearMonth,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  try {
+    const properties: any = {
+      [NOTION_COLUMNS_ABSENCE_HISTORY.NAME]: {
+        title: [{ text: { content: `${studentName}_${originalDate}` } }],
+      },
+      [NOTION_COLUMNS_ABSENCE_HISTORY.STUDENT]: {
+        relation: [{ id: studentId }],
+      },
+      [NOTION_COLUMNS_ABSENCE_HISTORY.ORIGINAL_DATE]: {
+        date: { start: originalDate },
+      },
+      [NOTION_COLUMNS_ABSENCE_HISTORY.ABSENCE_REASON]: {
+        rich_text: [{ text: { content: absenceReason } }],
+      },
+      [NOTION_COLUMNS_ABSENCE_HISTORY.YEAR_MONTH]: {
+        rich_text: [{ text: { content: yearMonth } }],
+      },
+      [NOTION_COLUMNS_ABSENCE_HISTORY.RETEST_COMPLETED]: {
+        checkbox: false,
+      },
+    };
+
+    if (retestDate) {
+      properties[NOTION_COLUMNS_ABSENCE_HISTORY.RETEST_DATE] = {
+        date: { start: retestDate },
+      };
+    }
+
+    const data = await notionFetch('/pages', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent: { database_id: dbIds.absenceHistory },
+        properties,
+      }),
+    });
+
+    return {
+      id: data.id,
+      studentId,
+      studentName,
+      originalDate,
+      absenceReason,
+      retestDate,
+      retestCompleted: false,
+      yearMonth,
+      createdAt: data.created_time,
+    };
+  } catch (error) {
+    console.error('Failed to create absence history:', error);
+    return null;
+  }
+};
+
+// 결시 이력 업데이트 (재시험일 변경, 재시험 완료 처리)
+export const updateAbsenceHistory = async (
+  historyId: string,
+  updates: Partial<Pick<AbsenceHistory, 'retestDate' | 'retestCompleted' | 'absenceReason'>>
+): Promise<boolean> => {
+  const dbIds = getDbIds();
+  if (!dbIds.absenceHistory) {
+    console.warn('AbsenceHistory DB ID not configured');
+    return true; // 목업 모드
+  }
+
+  try {
+    const properties: any = {};
+
+    if (updates.retestDate !== undefined) {
+      properties[NOTION_COLUMNS_ABSENCE_HISTORY.RETEST_DATE] = updates.retestDate
+        ? { date: { start: updates.retestDate } }
+        : { date: null };
+    }
+
+    if (updates.retestCompleted !== undefined) {
+      properties[NOTION_COLUMNS_ABSENCE_HISTORY.RETEST_COMPLETED] = {
+        checkbox: updates.retestCompleted,
+      };
+    }
+
+    if (updates.absenceReason !== undefined) {
+      properties[NOTION_COLUMNS_ABSENCE_HISTORY.ABSENCE_REASON] = {
+        rich_text: [{ text: { content: updates.absenceReason } }],
+      };
+    }
+
+    await notionFetch(`/pages/${historyId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ properties }),
+    });
+
+    return true;
+  } catch (error) {
+    console.error('Failed to update absence history:', error);
+    return false;
+  }
+};
+
+// 학생별 결시 이력 조회
+export const fetchStudentAbsenceHistories = async (studentId: string): Promise<AbsenceHistory[]> => {
+  const dbIds = getDbIds();
+  if (!dbIds.absenceHistory) {
+    console.warn('AbsenceHistory DB ID not configured');
+    return [];
+  }
+
+  try {
+    const data = await notionFetch(`/databases/${dbIds.absenceHistory}/query`, {
+      method: 'POST',
+      body: JSON.stringify({
+        filter: {
+          property: NOTION_COLUMNS_ABSENCE_HISTORY.STUDENT,
+          relation: { contains: studentId },
+        },
+        sorts: [{ property: NOTION_COLUMNS_ABSENCE_HISTORY.ORIGINAL_DATE, direction: 'descending' }],
+      }),
+    });
+
+    return data.results.map((page: any) => ({
+      id: page.id,
+      studentId: page.properties[NOTION_COLUMNS_ABSENCE_HISTORY.STUDENT]?.relation?.[0]?.id || '',
+      originalDate: page.properties[NOTION_COLUMNS_ABSENCE_HISTORY.ORIGINAL_DATE]?.date?.start || '',
+      absenceReason: page.properties[NOTION_COLUMNS_ABSENCE_HISTORY.ABSENCE_REASON]?.rich_text?.[0]?.plain_text || '',
+      retestDate: page.properties[NOTION_COLUMNS_ABSENCE_HISTORY.RETEST_DATE]?.date?.start || undefined,
+      retestCompleted: page.properties[NOTION_COLUMNS_ABSENCE_HISTORY.RETEST_COMPLETED]?.checkbox || false,
+      yearMonth: page.properties[NOTION_COLUMNS_ABSENCE_HISTORY.YEAR_MONTH]?.rich_text?.[0]?.plain_text || '',
+      createdAt: page.created_time,
+    }));
+  } catch (error) {
+    console.error('Failed to fetch student absence histories:', error);
+    return [];
   }
 };
 

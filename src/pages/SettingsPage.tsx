@@ -23,6 +23,7 @@ export default function SettingsPage() {
   const [notionStudentsDb, setNotionStudentsDb] = useState(appSettings.notionStudentsDb || '');
   const [notionScoresDb, setNotionScoresDb] = useState(appSettings.notionScoresDb || '');
   const [notionExamsDb, setNotionExamsDb] = useState(appSettings.notionExamsDb || '');
+  const [notionAbsenceHistoryDb, setNotionAbsenceHistoryDb] = useState(appSettings.notionAbsenceHistoryDb || '');
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [connectionMessage, setConnectionMessage] = useState('');
 
@@ -160,6 +161,7 @@ export default function SettingsPage() {
       notionStudentsDb: notionStudentsDb || undefined,
       notionScoresDb: notionScoresDb || undefined,
       notionExamsDb: notionExamsDb || undefined,
+      notionAbsenceHistoryDb: notionAbsenceHistoryDb || undefined,
       // Cloudinary 설정
       cloudinaryCloudName: cloudinaryCloudName || undefined,
       cloudinaryApiKey: cloudinaryApiKey || undefined,
@@ -455,6 +457,21 @@ export default function SettingsPage() {
                     placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                     style={inputStyle}
                   />
+                </div>
+
+                {/* 결시 이력 DB */}
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={labelStyle}>결시 이력 DB ID</label>
+                  <input
+                    type="text"
+                    value={notionAbsenceHistoryDb}
+                    onChange={(e) => setNotionAbsenceHistoryDb(e.target.value)}
+                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    style={inputStyle}
+                  />
+                  <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>
+                    결시 이력을 저장할 DB입니다. (선택)
+                  </p>
                 </div>
               </div>
 

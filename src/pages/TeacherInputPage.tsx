@@ -1,27 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useReportStore } from '../stores/reportStore';
 import { fetchStudents, fetchExams, saveScore } from '../services/notion';
-import type { SubjectScore, DifficultyGrade } from '../types';
-
-// 난이도별 색상
-const DIFFICULTY_COLORS: Record<DifficultyGrade, string> = {
-  'A': '#ef4444',
-  'B': '#f97316',
-  'C': '#eab308',
-  'D': '#84cc16',
-  'E': '#22c55e',
-  'F': '#3b82f6',
-};
-
-const DIFFICULTY_LABELS: Record<DifficultyGrade, string> = {
-  'A': '최상',
-  'B': '상',
-  'C': '중',
-  'D': '중하',
-  'E': '하',
-  'F': '기초',
-};
+import { DIFFICULTY_COLORS, DIFFICULTY_LABELS } from '../constants';
+import type { SubjectScore } from '../types';
 
 export default function TeacherInputPage() {
   const navigate = useNavigate();
@@ -97,30 +79,34 @@ export default function TeacherInputPage() {
     setStudentScores(scoreMap);
   }, [selectedSubject, students, reports, currentYearMonth]);
 
-  const myStudents = students.filter((s) => s.subjects.includes(selectedSubject));
+  // Memoize filtered students to avoid recalculation on every render
+  const myStudents = useMemo(
+    () => students.filter((s) => s.subjects.includes(selectedSubject)),
+    [students, selectedSubject]
+  );
 
   // 현재 월의 내 과목 시험 정보
   const currentExam = exams.find(
     (e) => e.subject === selectedSubject && e.yearMonth === currentYearMonth
   );
 
-  const handleScoreChange = (studentId: string, score: number) => {
+  const handleScoreChange = useCallback((studentId: string, score: number) => {
     setStudentScores((prev) => {
       const newMap = new Map(prev);
       const existing = newMap.get(studentId) || { score: 0, comment: '' };
       newMap.set(studentId, { ...existing, score: Math.max(0, Math.min(100, score)) });
       return newMap;
     });
-  };
+  }, []);
 
-  const handleCommentChange = (studentId: string, comment: string) => {
+  const handleCommentChange = useCallback((studentId: string, comment: string) => {
     setStudentScores((prev) => {
       const newMap = new Map(prev);
       const existing = newMap.get(studentId) || { score: 0, comment: '' };
       newMap.set(studentId, { ...existing, comment });
       return newMap;
     });
-  };
+  }, []);
 
   const handleSaveAll = async () => {
     if (!currentUser) return;
@@ -129,13 +115,22 @@ export default function TeacherInputPage() {
     setSavedMessage('');
 
     try {
-      let savedCount = 0;
-
-      for (const student of myStudents) {
+      // Filter students with scores to save
+      const studentsToSave = myStudents.filter(student => {
         const scoreData = studentScores.get(student.id);
-        if (!scoreData || scoreData.score === 0) continue;
+        return scoreData && scoreData.score > 0;
+      });
 
-        // Notion DB에 저장
+      if (studentsToSave.length === 0) {
+        setSavedMessage('저장할 점수가 없습니다.');
+        setTimeout(() => setSavedMessage(''), 3000);
+        setSaving(false);
+        return;
+      }
+
+      // Use Promise.allSettled for parallel saves with error handling
+      const savePromises = studentsToSave.map(async (student) => {
+        const scoreData = studentScores.get(student.id)!;
         const success = await saveScore(
           student.id,
           student.name,
@@ -145,55 +140,74 @@ export default function TeacherInputPage() {
           currentUser.teacher.id,
           scoreData.comment
         );
+        return { student, scoreData, success };
+      });
 
-        if (success) {
-          savedCount++;
+      const results = await Promise.allSettled(savePromises);
 
-          // 로컬 상태도 업데이트
-          const newScore: SubjectScore = {
-            subject: selectedSubject,
-            score: scoreData.score,
-            teacherId: currentUser.teacher.id,
-            teacherName: currentUser.teacher.name,
-            comment: scoreData.comment,
-            updatedAt: new Date().toISOString(),
-          };
+      // Process results and batch update local state
+      const successfulSaves: Array<{ student: typeof studentsToSave[0]; scoreData: { score: number; comment: string } }> = [];
 
-          let report = reports.find(
-            (r) => r.studentId === student.id && r.yearMonth === currentYearMonth
-          );
-
-          if (report) {
-            const existingScoreIndex = report.scores.findIndex((s) => s.subject === selectedSubject);
-            const newScores = [...report.scores];
-
-            if (existingScoreIndex >= 0) {
-              newScores[existingScoreIndex] = newScore;
-            } else {
-              newScores.push(newScore);
-            }
-
-            updateReport({
-              ...report,
-              scores: newScores,
-              updatedAt: new Date().toISOString(),
-            });
-          } else {
-            addReport({
-              id: `${student.id}-${currentYearMonth}`,
-              studentId: student.id,
-              studentName: student.name,
-              yearMonth: currentYearMonth,
-              scores: [newScore],
-              status: 'draft',
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            });
-          }
+      for (const result of results) {
+        if (result.status === 'fulfilled' && result.value.success) {
+          successfulSaves.push({
+            student: result.value.student,
+            scoreData: result.value.scoreData,
+          });
         }
       }
 
-      setSavedMessage(`${savedCount}명 저장 완료!`);
+      // Batch update local state for all successful saves
+      const now = new Date().toISOString();
+      for (const { student, scoreData } of successfulSaves) {
+        const newScore: SubjectScore = {
+          subject: selectedSubject,
+          score: scoreData.score,
+          teacherId: currentUser.teacher.id,
+          teacherName: currentUser.teacher.name,
+          comment: scoreData.comment,
+          updatedAt: now,
+        };
+
+        const report = reports.find(
+          (r) => r.studentId === student.id && r.yearMonth === currentYearMonth
+        );
+
+        if (report) {
+          const existingScoreIndex = report.scores.findIndex((s) => s.subject === selectedSubject);
+          const newScores = [...report.scores];
+
+          if (existingScoreIndex >= 0) {
+            newScores[existingScoreIndex] = newScore;
+          } else {
+            newScores.push(newScore);
+          }
+
+          updateReport({
+            ...report,
+            scores: newScores,
+            updatedAt: now,
+          });
+        } else {
+          addReport({
+            id: `${student.id}-${currentYearMonth}`,
+            studentId: student.id,
+            studentName: student.name,
+            yearMonth: currentYearMonth,
+            scores: [newScore],
+            status: 'draft',
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+      }
+
+      const failedCount = studentsToSave.length - successfulSaves.length;
+      if (failedCount > 0) {
+        setSavedMessage(`${successfulSaves.length}명 저장 완료, ${failedCount}명 실패`);
+      } else {
+        setSavedMessage(`${successfulSaves.length}명 저장 완료!`);
+      }
       setTimeout(() => setSavedMessage(''), 3000);
     } catch (error) {
       console.error('Save error:', error);

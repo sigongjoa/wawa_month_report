@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Teacher, Student, MonthlyReport, SendHistory, CurrentUser, Exam, AppSettings } from '../types';
+import type { Teacher, Student, MonthlyReport, SendHistory, CurrentUser, Exam, AppSettings, AbsenceHistory } from '../types';
 
 interface ReportState {
   // 로그인
@@ -42,6 +42,12 @@ interface ReportState {
   // 앱 설정
   appSettings: AppSettings;
   setAppSettings: (settings: Partial<AppSettings>) => void;
+
+  // 결시 이력
+  absenceHistories: AbsenceHistory[];
+  setAbsenceHistories: (histories: AbsenceHistory[]) => void;
+  addAbsenceHistory: (history: AbsenceHistory) => void;
+  updateAbsenceHistory: (history: AbsenceHistory) => void;
 
   // 초기화
   reset: () => void;
@@ -122,6 +128,18 @@ export const useReportStore = create<ReportState>()(
         appSettings: { ...state.appSettings, ...settings },
       })),
 
+      // 결시 이력
+      absenceHistories: [],
+      setAbsenceHistories: (histories) => set({ absenceHistories: histories }),
+      addAbsenceHistory: (history) => set((state) => ({
+        absenceHistories: [history, ...state.absenceHistories],
+      })),
+      updateAbsenceHistory: (history) => set((state) => ({
+        absenceHistories: state.absenceHistories.map((h) =>
+          h.id === history.id ? history : h
+        ),
+      })),
+
       // 초기화
       reset: () => set({
         currentUser: null,
@@ -133,6 +151,7 @@ export const useReportStore = create<ReportState>()(
         currentYearMonth: getCurrentYearMonth(),
         exams: [],
         appSettings: defaultAppSettings,
+        absenceHistories: [],
       }),
     }),
     {
@@ -146,6 +165,7 @@ export const useReportStore = create<ReportState>()(
         currentYearMonth: state.currentYearMonth,
         exams: state.exams,
         appSettings: state.appSettings,
+        absenceHistories: state.absenceHistories,
       }),
     }
   )

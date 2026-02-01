@@ -4,21 +4,11 @@
  * Signed Upload 방식 사용 (API Key + API Secret)
  */
 
-import { AppSettings, CloudinaryUploadResult } from '../types';
+import { CloudinaryUploadResult } from '../types';
+import { useReportStore } from '../stores/reportStore';
 
-// localStorage에서 앱 설정 가져오기
-const getAppSettings = (): Partial<AppSettings> => {
-  try {
-    const stored = localStorage.getItem('wawa-report-storage');
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      return parsed.state?.appSettings || {};
-    }
-  } catch (e) {
-    console.error('Failed to get app settings:', e);
-  }
-  return {};
-};
+// Zustand store에서 앱 설정 가져오기
+const getAppSettings = () => useReportStore.getState().appSettings;
 
 // Cloudinary 설정 가져오기
 export const getCloudinaryConfig = () => {
@@ -51,10 +41,6 @@ const generateSignature = async (
 
   const stringToSign = sortedParams + apiSecret;
   const signature = await sha1(stringToSign);
-
-  // 디버깅용 로그
-  console.log('[Cloudinary] String to sign:', sortedParams);
-  console.log('[Cloudinary] Generated signature:', signature);
 
   return signature;
 };
